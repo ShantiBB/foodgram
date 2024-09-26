@@ -7,9 +7,12 @@ from rest_framework.response import Response
 from rest_framework.serializers import ValidationError
 from rest_framework.views import APIView
 
-from .permissions import IsNotAuthenticatedOrReadOnly
-from .serializers import (PasswordChangeSerializer, UserAvatarSerializer,
-                          UserCreateSerializer, UserDetailSerializer)
+from recipe.models import Recipe
+from .permissions import IsNotAuthenticatedOrReadOnly, IsAuthorOrReadOnly
+from .serializers import (
+    PasswordChangeSerializer, UserAvatarSerializer,
+    UserCreateSerializer, UserDetailSerializer, RecipeSerializer
+)
 
 User = get_user_model()
 
@@ -48,7 +51,7 @@ class PasswordChangeView(generics.UpdateAPIView):
 
 
 class AvatarUpdateDeleteView(
-    mixins.UpdateModelMixin,
+    mixins.UpdateModelMixin, 
     generics.GenericAPIView
 ):
     queryset = User.objects.all()
@@ -101,3 +104,13 @@ class TokenLogoutView(APIView):
     def post(request):
         request.user.auth_token.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class RecipeViewSet(viewsets.ModelViewSet):
+    queryset = Recipe.objects.all()
+    serializer_class = RecipeSerializer
+    permission_classes = [IsAuthorOrReadOnly]
+    http_method_names = ('get', 'post', 'patch', 'delete')
+
+    def perform_create(self, serializer):
+        serializer.save(author=self.request.user)

@@ -39,7 +39,8 @@ INSTALLED_APPS = [
     'django_cleanup.apps.CleanupConfig',
     'rest_framework',
     'rest_framework.authtoken',
-    'user.apps.UserConfig'
+    'user.apps.UserConfig',
+    'recipe.apps.RecipeConfig'
 ]
 
 MIDDLEWARE = [

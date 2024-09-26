@@ -5,6 +5,7 @@ from django.contrib.auth.hashers import make_password
 from drf_extra_fields.fields import Base64ImageField
 from rest_framework import serializers
 
+from recipe.models import Recipe
 from .mixins import PasswordChangeMixin, PasswordMixin
 
 User = get_user_model()
@@ -62,3 +63,23 @@ class UserAvatarSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "Этот аватар уже установлен.")
         return value
+
+
+class RecipeSerializer(serializers.ModelSerializer):
+    author = UserDetailSerializer(read_only=True)
+    image = Base64ImageField(required=True)
+
+    class Meta:
+        model = Recipe
+        fields = (
+            'id', 'author', 'is_favorited', 'is_in_shopping_cart',
+            'name', 'image', 'text', 'cooking_time'
+        )
+
+    def validate(self, attrs):
+        user = self.context['request'].user
+        if Recipe.objects.filter(author=user, name=attrs['name']).exists():
+            raise serializers.ValidationError(
+                "Такой рецепт уже существует")
+        return attrs
+
