@@ -1,0 +1,6 @@
+Django==3.2.3
+djangorestframework==3.12.4
+flake8==6.0.0
+flake8-isort==6.0.0
+pillow==10.4.0
+pytest==6.2.4
