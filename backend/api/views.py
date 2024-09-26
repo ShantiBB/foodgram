@@ -1,72 +1,44 @@
-from django.contrib.auth import get_user_model, authenticate
-from rest_framework import status, generics, mixins
-from rest_framework.permissions import  IsAuthenticated
+from django.contrib.auth import get_user_model
+from rest_framework import generics, mixins, status, viewsets
+from rest_framework.authtoken.models import Token
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.serializers import ValidationError
 from rest_framework.views import APIView
-from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.exceptions import TokenError
-from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from .serializers import (
-    UserCreateSerializer, UserDetailSerializer,
-    PasswordChangeSerializer, UserAvatarSerializer
-)
-from .authentication import BearerAuthentication
-from .permissions import IsNotAuthenticated
+from .permissions import IsNotAuthenticatedOrReadOnly
+from .serializers import (PasswordChangeSerializer, UserAvatarSerializer,
+                          UserCreateSerializer, UserDetailSerializer)
 
 User = get_user_model()
 
 
-class UserCreateListView(
-    generics.GenericAPIView,
-    mixins.ListModelMixin,
-    mixins.CreateModelMixin
-):
+class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
-    serializer_class = UserDetailSerializer
-
-    def get(self, request, *args, **kwargs):
-        return self.list(request, *args, **kwargs)
-
-    def post(self, request, *args, **kwargs):
-        if request.user.is_authenticated:
-            return Response({"detail": "Вы уже авторизованы."},
-                            status=status.HTTP_403_FORBIDDEN)
-        return self.create(request, *args, **kwargs)
+    permission_classes = [IsNotAuthenticatedOrReadOnly]
+    http_method_names = ('get', 'post')
 
     def get_serializer_class(self):
-        if self.request.method.lower() == 'post':
+        if self.action == 'create':
             return UserCreateSerializer
-        return super().get_serializer_class()
+        return UserDetailSerializer
 
-
-
-class CurrentUserView(APIView):
-    permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication]
-
-    def get(self, request):
-        print("request.user:", request.user)
-        print("request.user.is_authenticated:", request.user.is_authenticated)
-        user = request.user
-        serializer = UserDetailSerializer(user)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-
+    @action(detail=False, methods=['get'])
+    def me(self, request):
+        serializer = self.get_serializer(request.user)
+        return Response(serializer.data)
 
 
 class PasswordChangeView(generics.UpdateAPIView):
     serializer_class = PasswordChangeSerializer
-
-    def get_object(self):
-        return self.request.user
 
     def update(self, request, *args, **kwargs):
         serializer = self.get_serializer(
             data=request.data, context={'request': request}
         )
         serializer.is_valid(raise_exception=True)
-        user = self.get_object()
+        user = request.user
         user.set_password(serializer.validated_data['new_password'])
         user.save()
         return Response(
@@ -77,11 +49,10 @@ class PasswordChangeView(generics.UpdateAPIView):
 
 class AvatarUpdateDeleteView(
     mixins.UpdateModelMixin,
-    mixins.DestroyModelMixin,
     generics.GenericAPIView
 ):
+    queryset = User.objects.all()
     serializer_class = UserAvatarSerializer
-    authentication_classes = [BearerAuthentication]
 
     def get_object(self):
         return self.request.user
@@ -90,34 +61,37 @@ class AvatarUpdateDeleteView(
         return self.update(request, *args, **kwargs)
 
     def delete(self, request, *args, **kwargs):
-        user = self.get_object()
-        user.avatar.delete(save=True)
+        avatar = self.get_object().avatar
+        if avatar:
+            avatar.delete(save=True)
+            return Response(
+                {'status': 'Аватар успешно удален'},
+                status=status.HTTP_204_NO_CONTENT
+            )
         return Response(
-            {'status': 'Аватар успешно удален'},
-            status=status.HTTP_204_NO_CONTENT
+            {'status': 'Аватар отсутствует'},
+            status=status.HTTP_404_NOT_FOUND
         )
 
 
 class TokenLoginView(APIView):
-
     @staticmethod
     def post(request):
         email = request.data.get('email')
         password = request.data.get('password')
+        if not email or not password:
+            raise ValidationError('Требуется только email и пароль')
+        user = User.objects.get(email=email)
 
-        user = authenticate(request, email=email, password=password)
-
-        if user is not None:
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'auth_token': str(refresh.access_token),
-                'refresh_token': str(refresh)
-            }, status=status.HTTP_200_OK)
-        else:
+        if not user.check_password(password):
             return Response(
-                {'error': 'Неверные email или пароль'},
-                status=status.HTTP_401_UNAUTHORIZED
+                {'error': 'Неверные учетные данные'},
+                status=status.HTTP_400_BAD_REQUEST
             )
+        token, created = Token.objects.get_or_create(user=user)
+        return Response(
+            {'auth_token': token.key}, status=status.HTTP_200_OK
+        )
 
 
 class TokenLogoutView(APIView):
@@ -125,11 +99,5 @@ class TokenLogoutView(APIView):
 
     @staticmethod
     def post(request):
-        refresh_token = request.data.get("refresh_token")
-        token = RefreshToken(refresh_token)
-        try:
-            token.blacklist()
-            return Response({"detail": "Token blacklisted successfully"},
-                            status=200)
-        except TokenError as e:
-            return Response({"detail": str(e)}, status=400)
+        request.user.auth_token.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

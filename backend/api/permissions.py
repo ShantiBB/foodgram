@@ -1,12 +1,10 @@
-from rest_framework.permissions import BasePermission
+from rest_framework.permissions import SAFE_METHODS, BasePermission
 
-class IsNotAuthenticated(BasePermission):
-    """
-    Разрешает доступ только неаутентифицированным пользователям.
-    """
+
+class IsNotAuthenticatedOrReadOnly(BasePermission):
 
     def has_permission(self, request, view):
-        if request.user.is_authenticated:
-            print('123')
-            return False
-        return True
+        return (
+            request.method in SAFE_METHODS
+            or not request.user.is_authenticated
+        )
