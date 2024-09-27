@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from recipe.models import Recipe
 from rest_framework import generics, mixins, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
@@ -7,12 +8,10 @@ from rest_framework.response import Response
 from rest_framework.serializers import ValidationError
 from rest_framework.views import APIView
 
-from recipe.models import Recipe
-from .permissions import IsNotAuthenticatedOrReadOnly, IsAuthorOrReadOnly
-from .serializers import (
-    PasswordChangeSerializer, UserAvatarSerializer,
-    UserCreateSerializer, UserDetailSerializer, RecipeSerializer
-)
+from .permissions import IsAuthorOrReadOnly, IsNotAuthenticatedOrReadOnly
+from .serializers import (PasswordChangeSerializer, RecipeSerializer,
+                          UserAvatarSerializer, UserCreateSerializer,
+                          UserDetailSerializer)
 
 User = get_user_model()
 
@@ -51,7 +50,7 @@ class PasswordChangeView(generics.UpdateAPIView):
 
 
 class AvatarUpdateDeleteView(
-    mixins.UpdateModelMixin, 
+    mixins.UpdateModelMixin,
     generics.GenericAPIView
 ):
     queryset = User.objects.all()
@@ -114,3 +113,12 @@ class RecipeViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
+
+    @action(detail=True, methods=['get'], url_path='get-link')
+    def get_link(self, request, pk):
+        recipe = self.get_object()
+        base_url = request.build_absolute_uri('/s/')
+        return Response(
+            {'short_link': base_url + recipe.short_link},
+            status=status.HTTP_200_OK
+        )

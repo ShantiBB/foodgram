@@ -3,9 +3,9 @@ import hashlib
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
 from drf_extra_fields.fields import Base64ImageField
+from recipe.models import Recipe
 from rest_framework import serializers
 
-from recipe.models import Recipe
 from .mixins import PasswordChangeMixin, PasswordMixin
 
 User = get_user_model()
@@ -82,4 +82,3 @@ class RecipeSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "Такой рецепт уже существует")
         return attrs
-
