@@ -1,5 +1,6 @@
+from django.db import models
+from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
-from recipe.models import Recipe
 from rest_framework import generics, mixins, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
@@ -11,7 +12,9 @@ from rest_framework.views import APIView
 from .permissions import IsAuthorOrReadOnly, IsNotAuthenticatedOrReadOnly
 from .serializers import (PasswordChangeSerializer, RecipeSerializer,
                           UserAvatarSerializer, UserCreateSerializer,
-                          UserDetailSerializer)
+                          UserDetailSerializer, TagSerializer,
+                          IngredientSerializer, RecipeFavoriteSerializer)
+from recipe.models import Recipe, Tag, Ingredient, Favorite
 
 User = get_user_model()
 
@@ -106,10 +109,21 @@ class TokenLogoutView(APIView):
 
 
 class RecipeViewSet(viewsets.ModelViewSet):
-    queryset = Recipe.objects.all()
     serializer_class = RecipeSerializer
     permission_classes = [IsAuthorOrReadOnly]
     http_method_names = ('get', 'post', 'patch', 'delete')
+
+    def get_queryset(self):
+        user = self.request.user
+        queryset = Recipe.objects.all()
+        if user.is_authenticated:
+            favorites = Favorite.objects.filter(
+                user=user, recipe=models.OuterRef('pk')
+            )
+            return queryset.annotate(
+                _is_favorited=models.Exists(favorites)
+            )
+        return queryset
 
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
@@ -122,3 +136,34 @@ class RecipeViewSet(viewsets.ModelViewSet):
             {'short_link': base_url + recipe.short_link},
             status=status.HTTP_200_OK
         )
+
+    @action(
+        detail=True, methods=['post', 'delete'],
+        permission_classes=[IsAuthenticated],
+        serializer_class=RecipeFavoriteSerializer
+    )
+    def favorite(self, request, pk=None):
+        recipe = get_object_or_404(Recipe, pk=pk)
+        favorite, created = Favorite.objects.get_or_create(
+            user=request.user, recipe=recipe
+        )
+        if request.method == 'DELETE':
+            favorite.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        serializer = self.get_serializer(recipe)
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED
+        )
+
+
+class TagViewSet(viewsets.ModelViewSet):
+    queryset = Tag.objects.all()
+    serializer_class = TagSerializer
+    http_method_names = ('get',)
+
+
+class IngredientViewSet(viewsets.ModelViewSet):
+    queryset = Ingredient.objects.all()
+    serializer_class = IngredientSerializer
+    http_method_names = ('get',)

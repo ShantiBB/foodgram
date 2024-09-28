@@ -131,6 +131,8 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+DEFAULT_FILE_STORAGE = 'foodgram_backend.utils.DeduplicateStorage'
+
 AUTH_USER_MODEL = 'user.CustomUser'
 
 REST_FRAMEWORK = {

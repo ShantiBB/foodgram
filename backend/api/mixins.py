@@ -2,7 +2,7 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
 
-class PasswordMixin:
+class PasswordMixin(serializers.ModelSerializer):
 
     def validate_password(self, value):
         user = self.instance if self.instance else None
@@ -10,7 +10,7 @@ class PasswordMixin:
         return value
 
 
-class PasswordChangeMixin:
+class PasswordChangeMixin(serializers.Serializer):
 
     def validate_new_password(self, value):
         user = self.context['request'].user

@@ -1,12 +1,15 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from .views import (AvatarUpdateDeleteView, PasswordChangeView, RecipeViewSet,
-                    TokenLoginView, TokenLogoutView, UserViewSet)
+from .views import (AvatarUpdateDeleteView, PasswordChangeView,
+                    RecipeViewSet, TokenLoginView, TokenLogoutView,
+                    UserViewSet, TagViewSet, IngredientViewSet)
 
 router = DefaultRouter()
 router.register(r'users', UserViewSet, basename='user')
 router.register(r'recipes', RecipeViewSet, basename='recipe')
+router.register(r'tags', TagViewSet, basename='tag')
+router.register(r'ingredients', IngredientViewSet, basename='ingredient')
 
 urlpatterns = [
     path('users/me/avatar/', AvatarUpdateDeleteView.as_view()),
