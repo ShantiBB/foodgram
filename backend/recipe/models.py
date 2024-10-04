@@ -33,7 +33,9 @@ class Ingredient(models.Model):
 
 
 class Recipe(models.Model):
-    tags = models.ManyToManyField(Tag, related_name='recipes')
+    tags = models.ManyToManyField(
+        Tag, related_name='recipes', through='RecipeTag'
+    )
     ingredients = models.ManyToManyField(
         Ingredient, related_name='recipes', through='RecipeIngredient'
     )
@@ -58,6 +60,10 @@ class Recipe(models.Model):
     class Meta:
         verbose_name = 'Рецепт'
         verbose_name_plural = 'Рецепты'
+        constraints = (
+            models.UniqueConstraint(
+                fields=('name', 'author'), name='unique_recipe_author'),
+        )
 
     def get_absolute_url(self):
         return reverse('recipe-detail', args=[self.id])
@@ -79,16 +85,35 @@ class Recipe(models.Model):
         return self.name
 
 
+class RecipeTag(models.Model):
+    recipe = models.ForeignKey(
+        Recipe, on_delete=models.CASCADE, related_name='recipe_tags'
+    )
+    tag = models.ForeignKey(
+        Tag, on_delete=models.CASCADE,
+        related_name='recipe_tags'
+    )
+
+    class Meta:
+        constraints = (models.UniqueConstraint(
+            fields=('recipe', 'tag'), name='unique_recipe_tag'),
+        )
+
+
 class RecipeIngredient(models.Model):
     recipe = models.ForeignKey(
         Recipe, on_delete=models.CASCADE, related_name='recipe_ingredients'
     )
-    ingredient = models.ForeignKey(Ingredient, on_delete=models.CASCADE)
+    ingredient = models.ForeignKey(
+        Ingredient, on_delete=models.CASCADE,
+        related_name='recipe_ingredients'
+    )
     amount = models.PositiveSmallIntegerField()
 
     class Meta:
-        verbose_name = 'Ингредиент в рецепте'
-        verbose_name_plural = 'Ингредиенты в рецептах'
+        constraints = (models.UniqueConstraint(
+            fields=('recipe', 'ingredient'), name='unique_recipe_ingredient'),
+        )
 
 
 class Favorite(models.Model):

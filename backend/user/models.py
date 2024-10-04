@@ -28,3 +28,17 @@ class CustomUser(AbstractUser):
 
     def __str__(self):
         return self.username
+
+
+class Follow(models.Model):
+    following = models.ForeignKey(
+        CustomUser, on_delete=models.CASCADE, related_name='followings'
+    )
+    follower = models.ForeignKey(
+        CustomUser, on_delete=models.CASCADE, related_name='followers'
+    )
+
+    class Meta:
+        constraints = (models.UniqueConstraint(
+            fields=('following', 'follower'), name='unique_follow'
+        ),)

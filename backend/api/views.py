@@ -1,7 +1,7 @@
 from django.db import models
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
-from rest_framework import generics, mixins, status, viewsets
+from rest_framework import generics, mixins, status, viewsets, filters
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -13,8 +13,10 @@ from .permissions import IsAuthorOrReadOnly, IsNotAuthenticatedOrReadOnly
 from .serializers import (PasswordChangeSerializer, RecipeSerializer,
                           UserAvatarSerializer, UserCreateSerializer,
                           UserDetailSerializer, TagSerializer,
-                          IngredientSerializer, RecipeFavoriteSerializer)
+                          IngredientSerializer, RecipeFavoriteSerializer,
+                          UserFollowSerializer)
 from recipe.models import Recipe, Tag, Ingredient, Favorite
+from user.models import Follow
 
 User = get_user_model()
 
@@ -29,16 +31,37 @@ class UserViewSet(viewsets.ModelViewSet):
             return UserCreateSerializer
         return UserDetailSerializer
 
-    @action(detail=False, methods=['get'])
+    @action(
+        detail=False, methods=['get'], permission_classes=[IsAuthenticated]
+    )
     def me(self, request):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
 
+    @action(
+        detail=True, methods=['post', 'delete'],
+        permission_classes=[IsAuthenticated],
+        serializer_class=UserFollowSerializer
+    )
+    def subscribe(self, request, pk=None):
+        following = get_object_or_404(User, pk=pk)
+        follower, created = Follow.objects.get_or_create(
+            following=following, follower=request.user
+        )
+        if request.method == 'DELETE':
+            follower.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        serializer = self.get_serializer(following)
+        return Response(
+            serializer.data, status=status.HTTP_201_CREATED
+        )
+
 
 class PasswordChangeView(generics.UpdateAPIView):
     serializer_class = PasswordChangeSerializer
+    http_method_names = ['post']
 
-    def update(self, request, *args, **kwargs):
+    def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(
             data=request.data, context={'request': request}
         )
@@ -70,7 +93,6 @@ class AvatarUpdateDeleteView(
         if avatar:
             avatar.delete(save=True)
             return Response(
-                {'status': 'Аватар успешно удален'},
                 status=status.HTTP_204_NO_CONTENT
             )
         return Response(
@@ -131,7 +153,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='get-link')
     def get_link(self, request, pk):
         recipe = self.get_object()
-        base_url = request.build_absolute_uri('/s/')
+        base_url = request.build_absolute_uri('/api/s/')
         return Response(
             {'short_link': base_url + recipe.short_link},
             status=status.HTTP_200_OK
@@ -160,10 +182,14 @@ class RecipeViewSet(viewsets.ModelViewSet):
 class TagViewSet(viewsets.ModelViewSet):
     queryset = Tag.objects.all()
     serializer_class = TagSerializer
+    pagination_class = None
     http_method_names = ('get',)
 
 
 class IngredientViewSet(viewsets.ModelViewSet):
     queryset = Ingredient.objects.all()
     serializer_class = IngredientSerializer
+    pagination_class = None
+    filter_backends = (filters.SearchFilter,)
+    search_fields = ('name',)
     http_method_names = ('get',)

@@ -1,9 +1,13 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
-from drf_extra_fields.fields import Base64ImageField
 from rest_framework import serializers
+from rest_framework.exceptions import NotFound
+from drf_extra_fields.fields import Base64ImageField
 
-from recipe.models import Recipe, Tag, Ingredient, RecipeIngredient, Favorite
+from recipe.models import (
+    Recipe, Tag, Ingredient, RecipeIngredient, Favorite
+)
+from user.models import Follow
 from .mixins import PasswordChangeMixin, PasswordMixin
 
 User = get_user_model()
@@ -58,8 +62,8 @@ class IngredientSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'measurement_unit')
 
 
-class IngredientAmountSerializer(serializers.ModelSerializer):
-    id = serializers.IntegerField()
+class RecipeIngredientSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source='ingredient.id')
     amount = serializers.IntegerField()
     name = serializers.CharField(
         source='ingredient.name', read_only=True
@@ -74,13 +78,15 @@ class IngredientAmountSerializer(serializers.ModelSerializer):
 
 
 class RecipeSerializer(serializers.ModelSerializer):
+    tags = serializers.PrimaryKeyRelatedField(
+        queryset=Tag.objects.all(), many=True
+    )
     author = UserDetailSerializer(read_only=True)
-    ingredients = IngredientAmountSerializer(
+    ingredients = RecipeIngredientSerializer(
         source='recipe_ingredients',
         many=True
     )
     image = Base64ImageField(required=True)
-    is_favorited = serializers.SerializerMethodField()
 
     class Meta:
         model = Recipe
@@ -89,33 +95,54 @@ class RecipeSerializer(serializers.ModelSerializer):
             'is_in_shopping_cart', 'name', 'image', 'text', 'cooking_time'
         )
 
-    def validate(self, attrs):
-        request = self.context['request']
-        if request.method == 'POST':
-            user = request.user
-            name = attrs['name']
-            if Recipe.objects.filter(author=user, name=name).exists():
-                raise serializers.ValidationError(
-                    "Такой рецепт уже существует"
-                )
-        return attrs
+    @staticmethod
+    def pop_items(validated_data):
+        ingredients_data = validated_data.pop('recipe_ingredients', '')
+        tags_data = validated_data.pop('tags', '')
+        return ingredients_data, tags_data
+
+    @staticmethod
+    def create_ingredient(instance, item_data):
+        ing_id = item_data.get('ingredient').get('id')
+        amount = item_data.get('amount')
+        try:
+            exist_ingredient = Ingredient.objects.get(id=ing_id)
+        except Ingredient.DoesNotExist:
+            raise NotFound(f'Ингредиент с id {ing_id} не существует')
+        ingredient = RecipeIngredient.objects.create(
+            recipe=instance, ingredient=exist_ingredient, amount=amount
+        )
+        return ingredient
 
     def create(self, validated_data):
-        ingredients_data = validated_data.pop('recipe_ingredients')
-        tags = validated_data.pop('tags')
+        ingredients_data, tags_data = self.pop_items(validated_data)
         recipe = Recipe.objects.create(**validated_data)
-        recipe.tags.set(tags)
+        recipe.tags.set(tags_data)
 
         for ingredient_data in ingredients_data:
-            ingredient_id = ingredient_data['id']
-            ingredient = Ingredient.objects.get(id=ingredient_id)
-            amount = ingredient_data.get('amount')
-            RecipeIngredient.objects.create(
-                recipe=recipe,
-                ingredient=ingredient,
-                amount=amount
-            )
+            self.create_ingredient(recipe, ingredient_data)
         return recipe
+
+    def update(self, instance, validated_data):
+        ingredients_data, tags_data = self.pop_items(validated_data)
+        instance.tags.set(tags_data)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        # Создаем новые записи
+        new_ingredients = []
+        for ingredient_data in ingredients_data:
+            ingredient = self.create_ingredient(instance, ingredient_data)
+            new_ingredients.append(ingredient)
+        # Удаляем старые записи
+        exist_ingredients = instance.recipe_ingredients.all()
+        ingredients = set(exist_ingredients) - set(new_ingredients)
+        for ingredient in ingredients:
+            ingredient.delete()
+        instance.recipe_ingredients.set(new_ingredients)
+
+        instance.save()
+        return instance
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
@@ -127,8 +154,8 @@ class RecipeSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         user = request.user
         if request and user.is_authenticated:
-            favorite = Favorite.objects.all()
-            return favorite.filter(user=user, recipe=obj).exists()
+            favorite = Favorite.objects.filter(user=user, recipe=obj)
+            return favorite.exists()
         return False
 
 
@@ -136,3 +163,45 @@ class RecipeFavoriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Recipe
         fields = ('id', 'name', 'image', 'cooking_time')
+
+
+class RecipeFollowSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Recipe
+        fields = ('id', 'name', 'image', 'cooking_time')
+
+
+class UserFollowSerializer(serializers.ModelSerializer):
+    recipes = RecipeFollowSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = User
+        fields = (
+            'email', 'id', 'username', 'first_name',
+            'last_name', 'is_subscribed', 'recipes', 'avatar'
+        )
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        check_subscribe = validated_data['is_subscribed']
+        if request and check_subscribe:
+            follower = request.user
+            following_id = self.instance.id
+            following = User.objects.get(id=following_id)
+            if following:
+                follow, created = Follow.objects.get_or_create(
+                    follower=follower, following=following)
+                return follow
+        return super().create(validated_data)
+
+
+def get_is_subscribed(self, obj):
+        request = self.context.get('request')
+        follower = request.user
+        if request and follower.is_authenticated:
+            follow = Follow.objects.filter(follower=follower, following=obj)
+            return follow.exists()
+        return False
+
+
