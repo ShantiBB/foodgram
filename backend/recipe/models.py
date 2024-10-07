@@ -27,6 +27,7 @@ class Ingredient(models.Model):
     class Meta:
         verbose_name = 'Ингредиент'
         verbose_name_plural = 'Ингредиенты'
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -36,11 +37,17 @@ class Recipe(models.Model):
     tags = models.ManyToManyField(
         Tag, related_name='recipes', through='RecipeTag'
     )
+    author = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='recipes'
+    )
     ingredients = models.ManyToManyField(
         Ingredient, related_name='recipes', through='RecipeIngredient'
     )
-    author = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name='recipes'
+    is_favorited = models.ManyToManyField(
+        User, related_name='favorites', through='RecipeFavorite'
+    )
+    is_in_shopping_cart = models.ManyToManyField(
+        User, related_name='shopping', through='RecipeShoppingCart'
     )
     name = models.CharField(max_length=256, unique=True)
     image = models.ImageField(upload_to='img/recipes/', null=True, blank=True)
@@ -48,14 +55,10 @@ class Recipe(models.Model):
     cooking_time = models.PositiveSmallIntegerField(
         verbose_name='Время приготовления в минутах'
     )
-    is_in_shopping_cart = models.BooleanField(default=False)
     short_link = models.CharField(
         max_length=10, unique=True, blank=True, null=True
     )
-
-    @property
-    def is_favorited(self):
-        return hasattr(self, '_is_favorited') and self._is_favorited
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         verbose_name = 'Рецепт'
@@ -64,6 +67,7 @@ class Recipe(models.Model):
             models.UniqueConstraint(
                 fields=('name', 'author'), name='unique_recipe_author'),
         )
+        ordering=['-created_at']
 
     def get_absolute_url(self):
         return reverse('recipe-detail', args=[self.id])
@@ -114,12 +118,22 @@ class RecipeIngredient(models.Model):
         constraints = (models.UniqueConstraint(
             fields=('recipe', 'ingredient'), name='unique_recipe_ingredient'),
         )
+        ordering = ['ingredient__name']
 
 
-class Favorite(models.Model):
+class RecipeFavorite(models.Model):
     user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name='favorites'
+        User, on_delete=models.CASCADE, related_name='favorites_recipes'
     )
     recipe = models.ForeignKey(
-        Recipe, on_delete=models.CASCADE, related_name='favorites'
+        Recipe, on_delete=models.CASCADE, related_name='favorites_users'
+    )
+
+
+class RecipeShoppingCart(models.Model):
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='shopping_recipes'
+    )
+    recipe = models.ForeignKey(
+        Recipe, on_delete=models.CASCADE, related_name='shopping_users'
     )

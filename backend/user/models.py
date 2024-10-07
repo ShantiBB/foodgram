@@ -16,7 +16,6 @@ class CustomUser(AbstractUser):
     role = models.CharField(
         max_length=256, choices=ROLE_CHOICES, default='user'
     )
-    is_subscribed = models.BooleanField(default=False)
     avatar = models.ImageField(upload_to='img/avatar/', null=True, blank=True)
 
     USERNAME_FIELD = 'email'
