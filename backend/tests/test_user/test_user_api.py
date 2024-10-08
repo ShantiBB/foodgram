@@ -11,9 +11,9 @@ User = get_user_model()
 
 
 @pytest.mark.django_db
-def test_users_list(api_client, create_user, get_user_data):
+def test_users_list(api_client_anon, create_user, get_user_data):
     url = reverse('user-list')
-    response = api_client.get(url)
+    response = api_client_anon.get(url)
     assert response.status_code == status.HTTP_200_OK
     assert response.data['results'] == [get_user_data]
 
@@ -21,9 +21,9 @@ def test_users_list(api_client, create_user, get_user_data):
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     'user, data, status_code, prev_count, next_count', (
-        (lazy_fixture('api_client'), lazy_fixture('valid_user_data'),
+        (lazy_fixture('api_client_anon'), lazy_fixture('valid_user_data'),
          status.HTTP_201_CREATED, 0, 1),
-        (lazy_fixture('api_client'), lazy_fixture('invalid_user_data'),
+        (lazy_fixture('api_client_anon'), lazy_fixture('base_user_data'),
          status.HTTP_400_BAD_REQUEST, 0, 0),
         (lazy_fixture('user_auth'), lazy_fixture('valid_user_data'),
          status.HTTP_403_FORBIDDEN, 1, 1)
@@ -45,9 +45,9 @@ def test_user_create(
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     'user, user_id_or_me, status_code', (
-        (lazy_fixture('api_client'), lazy_fixture('user_id'),
+        (lazy_fixture('api_client_anon'), lazy_fixture('user_id'),
          status.HTTP_200_OK),
-        (lazy_fixture('api_client'), 'me', status.HTTP_401_UNAUTHORIZED),
+        (lazy_fixture('api_client_anon'), 'me', status.HTTP_401_UNAUTHORIZED),
         (lazy_fixture('user_auth'), 'me', status.HTTP_200_OK),
     )
 )
@@ -62,7 +62,7 @@ def test_user_detail(user, user_id_or_me, status_code, get_user_data):
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     'user, data, status_code', (
-        (lazy_fixture('api_client'), lazy_fixture('avatar_user_data'),
+        (lazy_fixture('api_client_anon'), lazy_fixture('avatar_user_data'),
          status.HTTP_401_UNAUTHORIZED),
         (lazy_fixture('user_auth'), lazy_fixture('avatar_user_data'),
          status.HTTP_200_OK),
@@ -91,7 +91,8 @@ def test_user_avatar(user, data, status_code, create_user):
 
 @pytest.mark.parametrize(
     'user, password_data, status_code', (
-        (lazy_fixture('api_client'), lazy_fixture('valid_set_password_data'),
+        (lazy_fixture('api_client_anon'),
+         lazy_fixture('valid_set_password_data'),
          status.HTTP_401_UNAUTHORIZED),
         (lazy_fixture('user_auth'), lazy_fixture('valid_set_password_data'),
          status.HTTP_204_NO_CONTENT),
@@ -113,9 +114,9 @@ def test_user_set_password(user, create_user, password_data, status_code):
 
 @pytest.mark.parametrize(
     'user, token_data, status_code', (
-        (lazy_fixture('api_client'), lazy_fixture('valid_token_data'),
+        (lazy_fixture('api_client_anon'), lazy_fixture('valid_token_data'),
          status.HTTP_200_OK),
-        (lazy_fixture('api_client'), lazy_fixture('invalid_token_data'),
+        (lazy_fixture('api_client_anon'), lazy_fixture('invalid_token_data'),
          status.HTTP_400_BAD_REQUEST),
         (lazy_fixture('user_auth'), lazy_fixture('valid_token_data'),
          status.HTTP_400_BAD_REQUEST),

@@ -27,7 +27,6 @@ User = get_user_model()
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
-
     permission_classes = [IsNotAuthenticatedOrReadOnly]
     http_method_names = ('get', 'post')
 
@@ -63,24 +62,37 @@ class FollowView(generics.UpdateAPIView):
     permission_classes = [IsAuthenticated]
     http_method_names = ['post', 'delete']
 
-    def follow_info(self, request):
-        pk = self.kwargs.get('pk')
-        following = get_object_or_404(User, pk=pk)
-        follower, created = Follow.objects.get_or_create(
-            following=following, follower=request.user
+    def handle_subscribe(self, request, following):
+        exist_message = 'Вы уже подписаны на данного пользователя'
+        not_exist_message = 'Вы уже отписались от данного пользователя'
+        self_sub_message = 'Нельзя подписаться на себя'
+        exist_following = Follow.objects.filter(
+            follower=request.user, following=following
         )
-        return following, follower
-
-    def post(self, request, *args, **kwargs):
-        following, follower = self.follow_info(request)
-        context = {'request': request}
-        serializer = UserFollowSerializer(following, context=context)
+        if request.method == 'POST':
+            if exist_following.exists():
+                raise ValidationError(exist_message)
+            elif following == request.user:
+                raise ValidationError(self_sub_message)
+            Follow.objects.create(follower=request.user, following=following)
+        elif request.method == 'DELETE':
+            if not exist_following.exists():
+                raise ValidationError(not_exist_message)
+            exist_following.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        updated_user = User.objects.annotate(
+            recipes_count=Count('recipes')
+        ).get(id=following.id)
+        serializer = self.get_serializer(updated_user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    def post(self, request, *args, **kwargs):
+        following = get_object_or_404(User, id=kwargs.get('pk'))
+        return self.handle_subscribe(request, following)
+
     def delete(self, request, *args, **kwargs):
-        following, follower = self.follow_info(request)
-        follower.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        following = get_object_or_404(User, id=kwargs.get('pk'))
+        return self.handle_subscribe(request, following)
 
 
 class PasswordChangeView(generics.UpdateAPIView):
@@ -190,18 +202,36 @@ class RecipeViewSet(viewsets.ModelViewSet):
         permission_classes=[IsAuthenticated],
         serializer_class=RecipeFavoriteSerializer
     )
-    def favorite(self, request, pk=None):
+    def handle_favorite_shopping_cart(
+            self, model, request, pk, message_exists, message_not_exists):
         recipe = get_object_or_404(Recipe, pk=pk)
-        favorite, created = RecipeFavorite.objects.get_or_create(
-            user=request.user, recipe=recipe
-        )
-        if request.method == 'DELETE':
-            favorite.delete()
+        user = request.user
+        obj_exists = model.objects.filter(user=user, recipe=recipe).exists()
+        if request.method == 'POST':
+            if obj_exists:
+                raise ValidationError(message_exists)
+            obj = model.objects.create(user=request.user, recipe=recipe)
+        elif request.method == 'DELETE':
+            if not obj_exists:
+                raise ValidationError(message_not_exists)
+            obj = model.objects.get(user=request.user, recipe=recipe)
+            obj.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
         serializer = self.get_serializer(recipe)
-        return Response(
-            serializer.data,
-            status=status.HTTP_201_CREATED
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True, methods=['post', 'delete'],
+        permission_classes=[IsAuthenticated],
+        serializer_class=RecipeFavoriteSerializer
+    )
+    def favorite(self, request, pk=None):
+        return self.handle_favorite_shopping_cart(
+            RecipeFavorite,
+            request,
+            pk,
+            'Рецепт уже в избранном',
+            'Рецепт уже удален из избранного'
         )
 
     @action(
@@ -210,18 +240,12 @@ class RecipeViewSet(viewsets.ModelViewSet):
         serializer_class=RecipeFavoriteSerializer
     )
     def shopping_cart(self, request, pk=None):
-        recipe = get_object_or_404(Recipe, pk=pk)
-        user = request.user
-        shopping_cart, created = RecipeShoppingCart.objects.get_or_create(
-            user=user, recipe=recipe
-        )
-        if request.method == 'DELETE':
-            shopping_cart.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        serializer = self.get_serializer(recipe)
-        return Response(
-            serializer.data,
-            status=status.HTTP_201_CREATED
+        return self.handle_favorite_shopping_cart(
+            RecipeShoppingCart,
+            request,
+            pk,
+            'Рецепт уже в cписке покупок',
+            'Рецепт отсутствует в списке покупок'
         )
 
 

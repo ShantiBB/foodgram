@@ -13,9 +13,11 @@ router.register(r'tags', TagViewSet, basename='tag')
 router.register(r'ingredients', IngredientViewSet, basename='ingredient')
 
 urlpatterns = [
-    path('recipes/download_shopping_cart/', ShoppingCartDownload.as_view()),
-    path('users/subscriptions/', FollowListView.as_view()),
-    path('users/<int:pk>/subscribe/', FollowView.as_view()),
+    path('recipes/download_shopping_cart/', ShoppingCartDownload.as_view(),
+         name='download_shopping_cart'),
+    path('users/subscriptions/', FollowListView.as_view(),
+         name='subscriptions'),
+    path('users/<int:pk>/subscribe/', FollowView.as_view(), name='subscribe'),
     path('users/me/avatar/', AvatarUpdateDeleteView.as_view(), name='avatar'),
     path('users/set_password/', PasswordChangeView.as_view(),
          name='set_password'),

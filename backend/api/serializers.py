@@ -2,9 +2,12 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
 from django.db import transaction
 from rest_framework import serializers
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, AuthenticationFailed
+from rest_framework.serializers import ValidationError
 from drf_extra_fields.fields import Base64ImageField
+from rest_framework.response import Response
 
+from foodgram_backend.settings import REST_FRAMEWORK
 from recipe.models import (Recipe, Tag, Ingredient, RecipeIngredient,
                            RecipeFavorite, RecipeShoppingCart)
 from user.models import Follow
@@ -74,7 +77,7 @@ class IngredientSerializer(serializers.ModelSerializer):
 
 class RecipeIngredientSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='ingredient.id')
-    amount = serializers.IntegerField()
+    amount = serializers.IntegerField(required=True)
     name = serializers.CharField(
         source='ingredient.name', read_only=True
     )
@@ -89,7 +92,7 @@ class RecipeIngredientSerializer(serializers.ModelSerializer):
 
 class RecipeSerializer(serializers.ModelSerializer):
     tags = serializers.PrimaryKeyRelatedField(
-        queryset=Tag.objects.all(), many=True,
+        queryset=Tag.objects.all(), many=True, required=True
     )
     author = UserDetailSerializer(read_only=True)
     ingredients = RecipeIngredientSerializer(
@@ -120,8 +123,16 @@ class RecipeSerializer(serializers.ModelSerializer):
                 'Поле c ингредиентами не может быть пустым'
             )
         try:
-            ing_id = item_data.get('ingredient').get('id')
+            ing_id = item_data.get('ingredient', {}).get('id')
             amount = item_data.get('amount')
+            if not ing_id or not amount:
+                raise serializers.ValidationError(
+                    'Поле c ингредиентами не заполнено'
+                )
+            if amount < 1:
+                raise serializers.ValidationError(
+                    'Количество ингредиента должно быть больше нуля'
+                )
             exist_ingredient = Ingredient.objects.get(id=ing_id)
         except Ingredient.DoesNotExist:
             raise NotFound(f'Ингредиент не найден')
@@ -136,6 +147,8 @@ class RecipeSerializer(serializers.ModelSerializer):
         return ingredient
 
     def create(self, validated_data):
+        if self.context.get('request').user.is_anonymous:
+            raise AuthenticationFailed('Пользователь не авторизован')
         with transaction.atomic():
             ingredients_data, tags_data = self.pop_items(validated_data)
             recipe = Recipe.objects.create(**validated_data)
@@ -199,12 +212,13 @@ class UserFollowSerializer(serializers.ModelSerializer):
 
     def get_recipes(self, obj):
         request = self.context.get('request')
-        recipes_limit = request.query_params.get('recipes_limit')
-        try:
-            recipes_limit = int(recipes_limit)
-        except (TypeError, ValueError):
-            recipes_limit = 3
-        recipes = obj.recipes.all()[:recipes_limit]
+        recipes = obj.recipes.all()
+        if 'recipes_limit' in request.query_params:
+            try:
+                recipes_limit = int(request.query_params['recipes_limit'])
+            except (TypeError, ValueError):
+                raise ValidationError('recipes_limit должен быть целым числом')
+            recipes = obj.recipes.all()[:recipes_limit]
         serializer = RecipeFavoriteSerializer(
             recipes, many=True, read_only=True
         )

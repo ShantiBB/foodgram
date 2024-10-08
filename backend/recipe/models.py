@@ -1,5 +1,6 @@
 from django.db import models
 from django.urls import reverse
+from django.core.validators import MinValueValidator
 from django.contrib.auth import get_user_model
 from rest_framework.exceptions import ValidationError
 
@@ -112,7 +113,7 @@ class RecipeIngredient(models.Model):
         Ingredient, on_delete=models.CASCADE,
         related_name='recipe_ingredients'
     )
-    amount = models.PositiveSmallIntegerField()
+    amount = models.PositiveSmallIntegerField(validators=[MinValueValidator(1)])
 
     class Meta:
         constraints = (models.UniqueConstraint(
