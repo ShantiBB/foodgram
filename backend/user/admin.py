@@ -13,6 +13,6 @@ class UserAdmin(admin.ModelAdmin):
         ),
         (
             'Permissions',
-            {'fields': ('is_active', 'is_staff', 'is_superuser', 'role',)}
+            {'fields': ('is_active', 'is_staff', 'is_superuser')}
         ),
     )

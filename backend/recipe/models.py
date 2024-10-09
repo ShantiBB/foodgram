@@ -68,7 +68,7 @@ class Recipe(models.Model):
             models.UniqueConstraint(
                 fields=('name', 'author'), name='unique_recipe_author'),
         )
-        ordering=['-created_at']
+        ordering = ['-created_at']
 
     def get_absolute_url(self):
         return reverse('recipe-detail', args=[self.id])
@@ -113,7 +113,9 @@ class RecipeIngredient(models.Model):
         Ingredient, on_delete=models.CASCADE,
         related_name='recipe_ingredients'
     )
-    amount = models.PositiveSmallIntegerField(validators=[MinValueValidator(1)])
+    amount = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1)]
+    )
 
     class Meta:
         constraints = (models.UniqueConstraint(

@@ -1,4 +1,4 @@
-from django.urls import path, include
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from .views import (AvatarUpdateDeleteView, PasswordChangeView,
@@ -22,8 +22,7 @@ urlpatterns = [
     path('users/set_password/', PasswordChangeView.as_view(),
          name='set_password'),
     path('auth/token/login/', TokenLoginView.as_view(), name='login'),
-    path('auth/token/logout/', TokenLogoutView.as_view(), name='logout'),
-    path('s/', include('recipe.urls')),
+    path('auth/token/logout/', TokenLogoutView.as_view(), name='logout')
 ] + router.urls
 
 

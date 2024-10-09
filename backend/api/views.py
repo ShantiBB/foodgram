@@ -2,36 +2,43 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.db.models import Count, Sum
 from django.contrib.auth import get_user_model
-from rest_framework import generics, mixins, status, viewsets, serializers
+from rest_framework import generics, mixins, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
-from rest_framework.serializers import ValidationError
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 
-from .permissions import IsAuthorOrReadOnly, IsNotAuthenticatedOrReadOnly
+from .permissions import (IsAdminOrAuthorOrReadOnly,
+                          IsAdminOrNotAuthenticatedOrReadOnly)
 from .serializers import (PasswordChangeSerializer, RecipeSerializer,
                           UserAvatarSerializer, UserCreateSerializer,
                           UserDetailSerializer, TagSerializer,
-                          IngredientSerializer, RecipeFavoriteSerializer,
+                          IngredientSerializer, RecipeShortSerializer,
                           UserFollowSerializer)
 from .filters import RecipeFilter, IngredientFilter
 from recipe.models import (Recipe, Tag, Ingredient,
                            RecipeFavorite, RecipeShoppingCart)
 from user.models import Follow
+from .validation import (validate_email_and_password,
+                         validate_user_authenticated,
+                         validate_user_not_authenticated,
+                         get_updated_user_data, authenticate_user_for_token,
+                         validate_object_existence, validate_subscribe,
+                         create_or_remove_favorite_or_shopping_cart,
+                         validate_new_password)
 
 User = get_user_model()
 
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
-    permission_classes = [IsNotAuthenticatedOrReadOnly]
-    http_method_names = ('get', 'post')
+    permission_classes = [IsAdminOrNotAuthenticatedOrReadOnly]
+    http_method_names = ('get', 'post', 'patch', 'delete')
 
     def get_serializer_class(self):
-        if self.action == 'create':
+        if self.action == 'create' or self.action == 'update':
             return UserCreateSerializer
         return UserDetailSerializer
 
@@ -42,9 +49,24 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
 
+    @action(
+        detail=True, methods=['post'], permission_classes=[IsAdminUser]
+    )
+    def set_password(self, request, pk=None):
+        user = self.get_object()
+        password = request.data.get('password')
+        validation_response = validate_new_password(user.password, password)
+        if validation_response:
+            return validation_response
+        user.password = password
+        user.save()
+        return Response(
+            {"status": "Пароль успешно обновлён"},
+            status=status.HTTP_200_OK
+        )
+
 
 class FollowListView(generics.ListAPIView):
-    queryset = User.objects.annotate(recipes_count=Count('recipes'))
     serializer_class = UserFollowSerializer
     permission_classes = [IsAuthenticated]
 
@@ -63,26 +85,14 @@ class FollowView(generics.UpdateAPIView):
     http_method_names = ['post', 'delete']
 
     def handle_subscribe(self, request, following):
-        exist_message = 'Вы уже подписаны на данного пользователя'
-        not_exist_message = 'Вы уже отписались от данного пользователя'
-        self_sub_message = 'Нельзя подписаться на себя'
-        exist_following = Follow.objects.filter(
-            follower=request.user, following=following
-        )
+        follow = Follow.objects.all()
+        validate_subscribe(request, following)
         if request.method == 'POST':
-            if exist_following.exists():
-                raise ValidationError(exist_message)
-            elif following == request.user:
-                raise ValidationError(self_sub_message)
-            Follow.objects.create(follower=request.user, following=following)
+            follow.create(follower=request.user, following=following)
         elif request.method == 'DELETE':
-            if not exist_following.exists():
-                raise ValidationError(not_exist_message)
-            exist_following.delete()
+            follow.filter(follower=request.user, following=following).delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
-        updated_user = User.objects.annotate(
-            recipes_count=Count('recipes')
-        ).get(id=following.id)
+        updated_user = get_updated_user_data(following)
         serializer = self.get_serializer(updated_user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -132,12 +142,9 @@ class AvatarUpdateDeleteView(
         avatar = self.get_object().avatar
         if avatar:
             avatar.delete(save=True)
-            return Response(
-                status=status.HTTP_204_NO_CONTENT
-            )
+            return Response(status=status.HTTP_204_NO_CONTENT)
         return Response(
-            {'status': 'Аватар отсутствует'},
-            status=status.HTTP_404_NOT_FOUND
+            {'status': 'Аватар отсутствует'}, status=status.HTTP_404_NOT_FOUND
         )
 
 
@@ -146,21 +153,11 @@ class TokenLoginView(APIView):
     def post(request):
         email = request.data.get('email')
         password = request.data.get('password')
-        if not email or not password:
-            raise ValidationError('Требуется только email и пароль')
-        user = User.objects.get(email=email)
-
-        if not user.check_password(password):
-            return Response(
-                {'error': 'Неверные учетные данные'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        if request.user.is_authenticated:
-            raise ValidationError('Пользователь уже авторизован')
-        token, created = Token.objects.get_or_create(user=user)
-        return Response(
-            {'auth_token': token.key}, status=status.HTTP_200_OK
-        )
+        validate_email_and_password(email, password)
+        user = authenticate_user_for_token(email, password)
+        validate_user_authenticated(request)
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response({'auth_token': token.key}, status=status.HTTP_200_OK)
 
 
 class TokenLogoutView(APIView):
@@ -175,7 +172,7 @@ class TokenLogoutView(APIView):
 class RecipeViewSet(viewsets.ModelViewSet):
     serializer_class = RecipeSerializer
     queryset = Recipe.objects.all()
-    permission_classes = [IsAuthorOrReadOnly]
+    permission_classes = [IsAdminOrAuthorOrReadOnly]
     http_method_names = ('get', 'post', 'patch', 'delete')
     filter_backends = [DjangoFilterBackend]
     filterset_class = RecipeFilter
@@ -184,9 +181,58 @@ class RecipeViewSet(viewsets.ModelViewSet):
         serializer.save(author=self.request.user)
 
     def create(self, request, *args, **kwargs):
+        validate_user_not_authenticated(request.user)
         response = super().create(request, *args, **kwargs)
         response.status_code = status.HTTP_201_CREATED
         return response
+
+    @action(
+        detail=True, methods=['post', 'delete'],
+        permission_classes=[IsAuthenticated],
+        serializer_class=RecipeShortSerializer
+    )
+    def handle_favorite_shopping_cart(
+            self, model, request, message_exists, message_not_exists
+    ):
+        recipe = self.get_object()
+        user = request.user
+        validate_object_existence(
+            model, user, recipe, message_exists,
+            message_not_exists, request.method
+        )
+        create_or_remove_favorite_or_shopping_cart(
+            model, user, recipe, request.method
+        )
+        if request.method == 'DELETE':
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        serializer = self.get_serializer(recipe)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True, methods=['post', 'delete'],
+        permission_classes=[IsAuthenticated],
+        serializer_class=RecipeShortSerializer
+    )
+    def favorite(self, request, pk=None):
+        return self.handle_favorite_shopping_cart(
+            RecipeFavorite,
+            request,
+            'Рецепт уже в избранном',
+            'Рецепт уже удален из избранного'
+        )
+
+    @action(
+        detail=True, methods=['post', 'delete'],
+        permission_classes=[IsAuthenticated],
+        serializer_class=RecipeShortSerializer
+    )
+    def shopping_cart(self, request, pk=None):
+        return self.handle_favorite_shopping_cart(
+            RecipeShoppingCart,
+            request,
+            'Рецепт уже в cписке покупок',
+            'Рецепт отсутствует в списке покупок'
+        )
 
     @action(detail=True, methods=['get'], url_path='get-link')
     def get_link(self, request, pk):
@@ -195,57 +241,6 @@ class RecipeViewSet(viewsets.ModelViewSet):
         return Response(
             {'short-link': base_url + recipe.short_link},
             status=status.HTTP_200_OK
-        )
-
-    @action(
-        detail=True, methods=['post', 'delete'],
-        permission_classes=[IsAuthenticated],
-        serializer_class=RecipeFavoriteSerializer
-    )
-    def handle_favorite_shopping_cart(
-            self, model, request, pk, message_exists, message_not_exists):
-        recipe = get_object_or_404(Recipe, pk=pk)
-        user = request.user
-        obj_exists = model.objects.filter(user=user, recipe=recipe).exists()
-        if request.method == 'POST':
-            if obj_exists:
-                raise ValidationError(message_exists)
-            obj = model.objects.create(user=request.user, recipe=recipe)
-        elif request.method == 'DELETE':
-            if not obj_exists:
-                raise ValidationError(message_not_exists)
-            obj = model.objects.get(user=request.user, recipe=recipe)
-            obj.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        serializer = self.get_serializer(recipe)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-    @action(
-        detail=True, methods=['post', 'delete'],
-        permission_classes=[IsAuthenticated],
-        serializer_class=RecipeFavoriteSerializer
-    )
-    def favorite(self, request, pk=None):
-        return self.handle_favorite_shopping_cart(
-            RecipeFavorite,
-            request,
-            pk,
-            'Рецепт уже в избранном',
-            'Рецепт уже удален из избранного'
-        )
-
-    @action(
-        detail=True, methods=['post', 'delete'],
-        permission_classes=[IsAuthenticated],
-        serializer_class=RecipeFavoriteSerializer
-    )
-    def shopping_cart(self, request, pk=None):
-        return self.handle_favorite_shopping_cart(
-            RecipeShoppingCart,
-            request,
-            pk,
-            'Рецепт уже в cписке покупок',
-            'Рецепт отсутствует в списке покупок'
         )
 
 
