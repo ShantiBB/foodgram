@@ -4,15 +4,14 @@ from django.db.models import (BooleanField, Count, Exists, OuterRef, Prefetch,
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
+from recipe.models import (Ingredient, Recipe, RecipeFavorite,
+                           RecipeIngredient, RecipeShoppingCart, Tag)
 from rest_framework import generics, mixins, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
-from recipe.models import (Ingredient, Recipe, RecipeFavorite,
-                           RecipeIngredient, RecipeShoppingCart, Tag)
 from user.models import Follow
 
 from .filters import IngredientFilter, RecipeFilter

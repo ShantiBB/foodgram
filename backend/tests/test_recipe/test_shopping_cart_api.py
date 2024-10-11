@@ -1,9 +1,8 @@
 import pytest
 from django.urls import reverse
 from pytest_lazyfixture import lazy_fixture
-from rest_framework import status
-
 from recipe.models import RecipeShoppingCart
+from rest_framework import status
 from tests.conftest import MESSAGE
 
 

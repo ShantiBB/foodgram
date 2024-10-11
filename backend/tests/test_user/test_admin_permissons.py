@@ -3,9 +3,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password
 from django.urls import reverse
 from pytest_lazyfixture import lazy_fixture
-from rest_framework import status
-
 from recipe.models import Ingredient, Recipe, Tag
+from rest_framework import status
 
 User = get_user_model()
 

@@ -4,9 +4,8 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from pytest_lazyfixture import lazy_fixture
-from rest_framework import status
-
 from recipe.models import Recipe, RecipeIngredient
+from rest_framework import status
 from tests.conftest import MESSAGE
 
 User = get_user_model()

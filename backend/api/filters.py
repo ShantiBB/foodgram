@@ -2,7 +2,6 @@ from django.contrib.auth import get_user_model
 from django.db.models import Case, IntegerField, When
 from django_filters import CharFilter, FilterSet
 from django_filters import rest_framework as filters
-
 from recipe.models import Ingredient, Recipe, Tag
 
 User = get_user_model()
