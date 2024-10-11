@@ -1,33 +1,35 @@
+from django.contrib.auth import get_user_model
+from django.db.models import (BooleanField, Count, Exists, OuterRef, Prefetch,
+                              Sum, Value)
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
-from django.db.models import Count, Sum
-from django.contrib.auth import get_user_model
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import generics, mixins, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django_filters.rest_framework import DjangoFilterBackend
 
-from .permissions import (IsAdminOrAuthorOrReadOnly,
-                          IsAdminOrNotAuthenticatedOrReadOnly)
-from .serializers import (PasswordChangeSerializer, RecipeSerializer,
-                          UserAvatarSerializer, UserCreateSerializer,
-                          UserDetailSerializer, TagSerializer,
-                          IngredientSerializer, RecipeShortSerializer,
-                          UserFollowSerializer)
-from .filters import RecipeFilter, IngredientFilter
-from recipe.models import (Recipe, Tag, Ingredient,
-                           RecipeFavorite, RecipeShoppingCart)
+from recipe.models import (Ingredient, Recipe, RecipeFavorite,
+                           RecipeIngredient, RecipeShoppingCart, Tag)
 from user.models import Follow
-from .validation import (validate_email_and_password,
-                         validate_user_authenticated,
-                         validate_user_not_authenticated,
-                         get_updated_user_data, authenticate_user_for_token,
-                         validate_object_existence, validate_subscribe,
+
+from .filters import IngredientFilter, RecipeFilter
+from .permissions import (IsAdminOrAuthorOrReadOnly,
+                          IsAdminOrNotAuthenticatedOrReadOnly,
+                          IsAdminOrReadOnly)
+from .serializers import (IngredientSerializer, PasswordChangeSerializer,
+                          RecipeSerializer, RecipeShortSerializer,
+                          TagSerializer, UserAvatarSerializer,
+                          UserCreateSerializer, UserDetailSerializer,
+                          UserFollowSerializer)
+from .validation import (authenticate_user_for_token,
                          create_or_remove_favorite_or_shopping_cart,
-                         validate_new_password)
+                         validate_email_and_password, validate_new_password,
+                         validate_object_existence, validate_subscribe,
+                         validate_user_authenticated,
+                         validate_user_not_authenticated)
 
 User = get_user_model()
 
@@ -42,28 +44,29 @@ class UserViewSet(viewsets.ModelViewSet):
             return UserCreateSerializer
         return UserDetailSerializer
 
+    def update(self, request, *args, **kwargs):
+        if 'password' in request.data:
+            user = self.get_object()
+            password = request.data.get('password')
+            validation_response = validate_new_password(
+                user.password, password
+            )
+            if validation_response:
+                return validation_response
+            user.set_password(password)
+            user.save()
+            return Response(
+                {"status": "Пароль успешно обновлён"},
+                status=status.HTTP_200_OK
+            )
+        return super().update(request, *args, **kwargs)
+
     @action(
         detail=False, methods=['get'], permission_classes=[IsAuthenticated]
     )
     def me(self, request):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
-
-    @action(
-        detail=True, methods=['post'], permission_classes=[IsAdminUser]
-    )
-    def set_password(self, request, pk=None):
-        user = self.get_object()
-        password = request.data.get('password')
-        validation_response = validate_new_password(user.password, password)
-        if validation_response:
-            return validation_response
-        user.password = password
-        user.save()
-        return Response(
-            {"status": "Пароль успешно обновлён"},
-            status=status.HTTP_200_OK
-        )
 
 
 class FollowListView(generics.ListAPIView):
@@ -72,11 +75,19 @@ class FollowListView(generics.ListAPIView):
 
     def get_queryset(self):
         follower = self.request.user
-        return User.objects.filter(
+        queryset = User.objects.filter(
             followings__follower=follower
         ).annotate(
-            recipes_count=Count('recipes')
+            recipes_count=Count('recipes', distinct=True),
+            is_subscribed=Value(True, output_field=BooleanField())
+        ).prefetch_related(
+            Prefetch(
+                'recipes',
+                queryset=Recipe.objects.all(),
+                to_attr='prefetched_recipes'
+            )
         )
+        return queryset
 
 
 class FollowView(generics.UpdateAPIView):
@@ -85,14 +96,25 @@ class FollowView(generics.UpdateAPIView):
     http_method_names = ['post', 'delete']
 
     def handle_subscribe(self, request, following):
+        user = request.user
         follow = Follow.objects.all()
         validate_subscribe(request, following)
         if request.method == 'POST':
-            follow.create(follower=request.user, following=following)
+            follow.create(follower=user, following=following)
         elif request.method == 'DELETE':
-            follow.filter(follower=request.user, following=following).delete()
+            follow.filter(follower=user, following=following).delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
-        updated_user = get_updated_user_data(following)
+        follow = Exists(follow.filter(follower=user, following=OuterRef('pk')))
+        updated_user = User.objects.filter(pk=following.pk).annotate(
+            recipes_count=Count('recipes', distinct=True),
+            is_subscribed=follow
+        ).prefetch_related(
+            Prefetch(
+                'recipes',
+                queryset=Recipe.objects.all(),
+                to_attr='prefetched_recipes'
+            )
+        ).first()
         serializer = self.get_serializer(updated_user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -171,11 +193,32 @@ class TokenLogoutView(APIView):
 
 class RecipeViewSet(viewsets.ModelViewSet):
     serializer_class = RecipeSerializer
-    queryset = Recipe.objects.all()
     permission_classes = [IsAdminOrAuthorOrReadOnly]
     http_method_names = ('get', 'post', 'patch', 'delete')
     filter_backends = [DjangoFilterBackend]
     filterset_class = RecipeFilter
+
+    def get_queryset(self):
+        user = self.request.user
+        queryset = Recipe.objects.all().select_related(
+            'author').prefetch_related(
+            'tags',
+            'recipe_ingredients__ingredient',
+        )
+        if user.is_authenticated:
+            queryset = queryset.prefetch_related(
+                Prefetch(
+                    'is_favorited',
+                    queryset=User.objects.filter(pk=user.pk),
+                    to_attr='is_favorited_for_user'
+                ),
+                Prefetch(
+                    'is_in_shopping_cart',
+                    queryset=User.objects.filter(pk=user.pk),
+                    to_attr='is_in_shopping_cart_for_user'
+                ),
+            )
+        return queryset
 
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
@@ -247,38 +290,42 @@ class RecipeViewSet(viewsets.ModelViewSet):
 class TagViewSet(viewsets.ModelViewSet):
     queryset = Tag.objects.all()
     serializer_class = TagSerializer
+    permission_classes = [IsAdminOrReadOnly]
     pagination_class = None
-    http_method_names = ('get',)
+    http_method_names = ('get', 'post', 'patch', 'delete')
 
 
 class IngredientViewSet(viewsets.ModelViewSet):
     queryset = Ingredient.objects.all()
     serializer_class = IngredientSerializer
+    permission_classes = [IsAdminOrReadOnly]
     pagination_class = None
     filter_backends = (DjangoFilterBackend,)
     filterset_class = IngredientFilter
-    http_method_names = ('get',)
+    http_method_names = ('get', 'post', 'patch', 'delete')
 
 
 class ShoppingCartDownload(APIView):
     @staticmethod
     def get(request):
-        recipe_shopping = RecipeShoppingCart.objects.all()
-        recipes_in_cart = recipe_shopping.filter(
+        recipes_in_cart = RecipeShoppingCart.objects.filter(
             user=request.user
-        ).values_list('recipe', flat=True)
-        ingredients = Ingredient.objects.filter(
-            recipe_ingredients__recipe__in=recipes_in_cart
+        ).values_list('recipe_id', flat=True)
+        ingredient_amounts = RecipeIngredient.objects.filter(
+            recipe_id__in=recipes_in_cart
+        ).values(
+            'ingredient__name',
+            'ingredient__measurement_unit'
         ).annotate(
-            amount=Sum('recipe_ingredients__amount')
-        ).values('name', 'measurement_unit', 'amount')
+            total_amount=Sum('amount')
+        )
         lines = ['Список покупок:\n']
-        for ingredient in ingredients:
-            name = ingredient['name']
-            measurement_unit = ingredient['measurement_unit']
-            amount = ingredient['amount']
+        for ingredient in ingredient_amounts:
+            name = ingredient['ingredient__name']
+            measurement_unit = ingredient['ingredient__measurement_unit']
+            amount = ingredient['total_amount']
             line = f'• {name} — {amount} {measurement_unit}'
             lines.append(line)
         content = '\n'.join(lines)
-        recipe_shopping.delete()
+        RecipeShoppingCart.objects.filter(user=request.user).delete()
         return HttpResponse(content, content_type='text/plain')

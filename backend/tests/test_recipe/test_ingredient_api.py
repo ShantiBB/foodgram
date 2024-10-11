@@ -27,3 +27,21 @@ def test_ingredient_detail(
     ingredients.pop('amount')
     data = get_ingredients_tags_data.get('ingredients')[0]
     assert response.data == data, MESSAGE
+
+
+@pytest.mark.django_db
+def test_valid_field_ingredient(user_auth, ingredient, valid_recipe_data):
+    url = reverse('recipe-list')
+    ingredients = valid_recipe_data.pop('ingredients')
+    response = user_auth.post(url, valid_recipe_data, format='json')
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    for item in ingredients[0]:
+        valid_recipe_data['ingredients'] = [{item: ingredient.id}]
+        response = user_auth.post(url, valid_recipe_data, format='json')
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+    valid_recipe_data['ingredients'] = [
+        {'id': ingredient.id, 'amount': -1}
+    ]
+    response = user_auth.post(url, valid_recipe_data, format='json')
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+

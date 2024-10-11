@@ -1,5 +1,3 @@
-from pprint import pprint
-
 import pytest
 from django.urls import reverse
 from pytest_lazyfixture import lazy_fixture

@@ -1,0 +1,35 @@
+volumes:
+  pg_data:
+  static:
+  media:
+
+services:
+  db:
+    image: postgres:13.10
+    env_file: .env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+  backend:
+    image: shantibb/foodgram_backend
+    env_file: .env
+    volumes:
+      - static:/backend_static
+      - media:/media
+    depends_on:
+      - db
+  frontend:
+    image: shantibb/foodgram_frontend
+    command: cp -r /app/build/. /frontend_static/
+    volumes:
+      - static:/frontend_static
+  nginx:
+    image: shantibb/foodgram_gateway
+    env_file: .env
+    volumes:
+      - static:/staticfiles/
+      - media:/media/
+    ports:
+      - 8000:80
+    depends_on:
+      - backend
+      - frontend

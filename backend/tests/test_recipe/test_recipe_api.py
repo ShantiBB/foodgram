@@ -1,10 +1,15 @@
+from pprint import pprint
+
 import pytest
+from django.contrib.auth import get_user_model
 from django.urls import reverse
 from pytest_lazyfixture import lazy_fixture
 from rest_framework import status
 
 from recipe.models import Recipe, RecipeIngredient
 from tests.conftest import MESSAGE
+
+User = get_user_model()
 
 
 @pytest.mark.django_db
@@ -13,6 +18,8 @@ def test_recipes_list(api_client_anon, create_recipe, get_recipe_data):
     response = api_client_anon.get(url)
     assert response.status_code == status.HTTP_200_OK
     image = 'http://testserver' + create_recipe.image.url
+    get_recipe_data['author']['id'] = User.objects.first().id
+    get_recipe_data['id'] = create_recipe.id
     data = [{**get_recipe_data, 'image': image}]
     assert response.data['results'] == data, MESSAGE
 
@@ -40,6 +47,8 @@ def test_recipe_create(
     assert recipe.count() == next_count
     if status_code == status.HTTP_201_CREATED:
         image = response.data.get('image')
+        get_recipe_data['author']['id'] = User.objects.first().id
+        get_recipe_data['id'] = recipe.first().id
         assert response.data == {**get_recipe_data, 'image': image}, MESSAGE
 
 
@@ -48,6 +57,8 @@ def test_recipe_detail(api_client_anon, create_recipe, get_recipe_data):
     url = reverse('recipe-detail', args=[create_recipe.id])
     response = api_client_anon.get(url)
     assert response.status_code == status.HTTP_200_OK
+    get_recipe_data['author']['id'] = User.objects.first().id
+    get_recipe_data['id'] = create_recipe.id
     image = 'http://testserver' + create_recipe.image.url
     assert response.data == {**get_recipe_data, 'image': image}, MESSAGE
 
@@ -84,6 +95,8 @@ def test_recipe_update(
     assert response.status_code == status_code
     get_recipe_ingredient(idx, amount, status_code)
     if status_code == status.HTTP_200_OK:
+        get_recipe_data['author']['id'] = User.objects.first().id
+        get_recipe_data['id'] = idx
         image = response.data.get('image')
         get_recipe_data['ingredients'][0]['amount'] = amount
         assert response.data == {**get_recipe_data, 'image': image}, MESSAGE

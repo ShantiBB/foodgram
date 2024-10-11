@@ -1,10 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password
 from django.db.models import Count
-from rest_framework import status
-from rest_framework.exceptions import (NotFound, ValidationError,
-                                       AuthenticationFailed)
-from rest_framework.response import Response
+from rest_framework.exceptions import (AuthenticationFailed, NotFound,
+                                       ValidationError)
 
 from recipe.models import Ingredient
 from user.models import Follow

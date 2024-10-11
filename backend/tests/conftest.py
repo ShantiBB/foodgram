@@ -1,10 +1,9 @@
 import pytest
 from django.contrib.auth import get_user_model
-from django.test.client import Client
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from recipe.models import Tag, Ingredient, Recipe, RecipeTag, RecipeIngredient
+from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag
 
 User = get_user_model()
 
@@ -22,6 +21,21 @@ def api_client_anon():
 @pytest.fixture
 def api_client():
     return APIClient()
+
+
+@pytest.fixture
+def admin_client():
+    return APIClient()
+
+
+@pytest.fixture
+def admin_auth(admin_client):
+    User.objects.create(
+        email='admin@mail.ru', username='admin', password=PASSWORD,
+        is_superuser=True
+    )
+    admin_client.force_authenticate(user=User.objects.get(username='admin'))
+    return admin_client
 
 
 @pytest.fixture
@@ -139,6 +153,12 @@ def ingredient(user_auth):
 
 
 @pytest.fixture
+def ingredient_two(user_auth):
+    return Ingredient.objects.create(name='ingredient_test_2',
+                                     measurement_unit='unit_test_2')
+
+
+@pytest.fixture
 def base_recipe_data(tag, ingredient):
     load_data = {
         "name": "string",
@@ -221,7 +241,7 @@ def get_subscribe_data(create_user, recipe_for_filters):
             {
                 "id": recipe_for_filters.id,
                 "name": recipe_for_filters.name,
-                "image": recipe_for_filters.image.url,
+                "image": 'http://testserver' + recipe_for_filters.image.url,
                 "cooking_time": recipe_for_filters.cooking_time
             }
         ],
@@ -229,6 +249,17 @@ def get_subscribe_data(create_user, recipe_for_filters):
         "avatar": None,
     }
     return load_data
+
+
+@pytest.fixture
+def valid_user_data_for_admin():
+    return {
+        "email": "test_user_admin@mail.ru",
+        "username": "test_user_admin",
+        "first_name": "test",
+        "last_name": "test",
+        "password": "1223aslk312"
+    }
 
 
 @pytest.fixture
@@ -305,3 +336,45 @@ def subscribed_user_auth(subscribe_client, create_user, follower_user):
     url = reverse('subscribe', args=[create_user.id])
     response = subscribe_client.post(url, format='json')
     return subscribe_client
+
+
+@pytest.fixture
+def recipe_data_for_admin(tag_two, ingredient_two):
+    load_data = {
+        "name": "admin_string",
+        "text": "admin_string",
+        "cooking_time": 10
+    }
+    return load_data
+
+
+@pytest.fixture
+def ingredient_data():
+    return {
+        "name": "Капуста",
+        "measurement_unit": "кг"
+    }
+
+
+@pytest.fixture
+def tag_data():
+    return {
+        "name": "Завтрак",
+        "slug": "breakfast"
+    }
+
+
+@pytest.fixture
+def ingredient_data_two(ingredient_two):
+    return {
+        "name": ingredient_two.name,
+        "measurement_unit": ingredient_two.measurement_unit
+    }
+
+
+@pytest.fixture
+def tag_data_two(tag_two):
+    return {
+        "name": tag_two.name,
+        "slug": tag_two.slug
+    }

@@ -22,6 +22,17 @@ def test_tag_detail(api_client_anon, tag, get_ingredients_tags_data):
 
 
 @pytest.mark.django_db
+def test_valid_field_tag(user_auth, valid_recipe_data):
+    url = reverse('recipe-list')
+    ingredients = valid_recipe_data.pop('tags')
+    response = user_auth.post(url, valid_recipe_data, format='json')
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    valid_recipe_data['tags'] = []
+    response = user_auth.post(url, valid_recipe_data, format='json')
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
 def test_tag_filters(api_client_anon, create_recipe, recipe_for_filters, tag):
     filter_url = f'?tags={tag.slug}'
     urls = (reverse('recipe-list'), reverse('recipe-list') + filter_url)

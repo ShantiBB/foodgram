@@ -1,11 +1,12 @@
 import base64
+from pprint import pprint
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from pytest_lazyfixture import lazy_fixture
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from pytest_lazyfixture import lazy_fixture
 
 User = get_user_model()
 
@@ -15,7 +16,8 @@ def test_users_list(api_client_anon, create_user, get_user_data):
     url = reverse('user-list')
     response = api_client_anon.get(url)
     assert response.status_code == status.HTTP_200_OK
-    assert response.data['results'] == [get_user_data]
+    get_user_data['id'] = User.objects.first().id
+    assert response.data.get('results') == [get_user_data]
 
 
 @pytest.mark.django_db
@@ -25,7 +27,7 @@ def test_users_list(api_client_anon, create_user, get_user_data):
          status.HTTP_201_CREATED, 0, 1),
         (lazy_fixture('api_client_anon'), lazy_fixture('base_user_data'),
          status.HTTP_400_BAD_REQUEST, 0, 0),
-        (lazy_fixture('user_auth'), lazy_fixture('valid_user_data'),
+        (lazy_fixture('not_author_user'), lazy_fixture('valid_user_data'),
          status.HTTP_403_FORBIDDEN, 1, 1)
     )
 )
@@ -38,8 +40,13 @@ def test_user_create(
     response = user.post(url, data, format='json')
     assert response.status_code == status_code
     if status_code == status.HTTP_201_CREATED:
+        user_data_after_reg['id'] = User.objects.first().id
         assert response.data == user_data_after_reg
     assert User.objects.all().count() == next_count
+    if status_code == status.HTTP_201_CREATED:
+        assert User.objects.filter(username=data.get('username')).exists()
+    else:
+        assert not User.objects.filter(username=data.get('username')).exists()
 
 
 @pytest.mark.django_db
@@ -56,6 +63,7 @@ def test_user_detail(user, user_id_or_me, status_code, get_user_data):
     response = user.get(url)
     assert response.status_code == status_code
     if status_code == status.HTTP_200_OK:
+        get_user_data['id'] = User.objects.first().id
         assert response.data == get_user_data
 
 
@@ -79,7 +87,7 @@ def test_user_avatar(user, data, status_code, create_user):
         avatar_path = create_user.avatar.path
         with open(avatar_path, 'rb') as avatar_file:
             updated_image = avatar_file.read()
-        avatar_base64 = data['avatar'].split(',')[1]
+        avatar_base64 = data.get('avatar').split(',')[1]
         original_image = base64.b64decode(avatar_base64)
         assert updated_image == original_image
         status_codes = (status.HTTP_204_NO_CONTENT, status.HTTP_404_NOT_FOUND)
@@ -104,12 +112,14 @@ def test_user_avatar(user, data, status_code, create_user):
 def test_user_set_password(user, create_user, password_data, status_code):
     url = reverse('set_password')
     if status_code == status.HTTP_204_NO_CONTENT:
-        assert create_user.check_password(password_data['current_password'])
+        assert create_user.check_password(
+            password_data.get('current_password')
+        )
     response = user.post(url, password_data, format='json')
     message = f"Received status {response.status_code}: {response.data}"
     assert response.status_code == status_code, message
     if status_code == status.HTTP_204_NO_CONTENT:
-        assert create_user.check_password(password_data['new_password'])
+        assert create_user.check_password(password_data.get('new_password'))
 
 
 @pytest.mark.parametrize(

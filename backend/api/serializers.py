@@ -1,15 +1,14 @@
 from django.contrib.auth import get_user_model
-from django.contrib.auth.hashers import make_password
 from django.db import transaction
-from rest_framework import serializers
 from drf_extra_fields.fields import Base64ImageField
+from rest_framework import serializers
 
-from recipe.models import (Recipe, Tag, Ingredient, RecipeIngredient,
-                           RecipeFavorite, RecipeShoppingCart)
+from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag
 from user.models import Follow
+
 from .mixins import PasswordChangeMixin, PasswordMixin
-from .validation import (validate_tags_and_ingredients,
-                         validate_ingredient_data, validate_recipes_limit)
+from .validation import (validate_ingredient_data, validate_recipes_limit,
+                         validate_tags_and_ingredients)
 
 User = get_user_model()
 
@@ -45,7 +44,7 @@ class UserCreateSerializer(PasswordMixin):
 
 class UserFollowSerializer(serializers.ModelSerializer):
     recipes = serializers.SerializerMethodField()
-    is_subscribed = serializers.SerializerMethodField()
+    is_subscribed = serializers.ReadOnlyField()
     recipes_count = serializers.IntegerField(read_only=True)
 
     class Meta:
@@ -57,22 +56,14 @@ class UserFollowSerializer(serializers.ModelSerializer):
 
     def get_recipes(self, obj):
         request = self.context.get('request')
-        recipes = obj.recipes.all()
         recipes_limit = validate_recipes_limit(request)
+        recipes = getattr(obj, 'prefetched_recipes', obj.recipes.all())
         if recipes_limit is not None:
             recipes = recipes[:recipes_limit]
         serializer = RecipeShortSerializer(
-            recipes, many=True, read_only=True
+            recipes, many=True, read_only=True, context=self.context
         )
         return serializer.data
-
-    def get_is_subscribed(self, obj):
-        request = self.context.get('request')
-        follower = request.user
-        if request and follower.is_authenticated:
-            follow = Follow.objects.filter(follower=follower, following=obj)
-            return follow.exists()
-        return False
 
 
 class UserAvatarSerializer(serializers.ModelSerializer):
@@ -160,17 +151,33 @@ class RecipeSerializer(serializers.ModelSerializer):
         ingredients_data, tags_data = self.pop_items(validated_data)
         validate_tags_and_ingredients(request, ingredients_data, tags_data)
         if request.method == 'POST':
-            recipe = Recipe.objects.create(**validated_data)
-            instance = recipe
-        if tags_data:
-            instance.tags.set(tags_data)
-        if request.method == 'PATCH':
-            if ingredients_data:
-                instance.recipe_ingredients.all().delete()
+            instance = Recipe.objects.create(**validated_data)
+        else:
             for attr, value in validated_data.items():
                 setattr(instance, attr, value)
-        for ingredient_data in ingredients_data:
-            self.create_ingredient(instance, ingredient_data)
+            instance.recipe_ingredients.all().delete()
+        if tags_data:
+            instance.tags.set(tags_data)
+        recipe_ingredients = []
+        ingredients_id = (
+            item['ingredient']['id'] for item in ingredients_data
+        )
+        ingredients = Ingredient.objects.filter(id__in=ingredients_id)
+        ingredients_map = {
+            ingredient.id: ingredient for ingredient in ingredients
+        }
+        for item in ingredients_data:
+            ing_id, amount = validate_ingredient_data(item)
+            ingredient = ingredients_map.get(ing_id)
+            if ingredient:
+                recipe_ingredients.append(
+                    RecipeIngredient(
+                        recipe=instance,
+                        ingredient=ingredient,
+                        amount=amount
+                    )
+                )
+        RecipeIngredient.objects.bulk_create(recipe_ingredients)
         instance.save()
         return instance
 
@@ -183,22 +190,12 @@ class RecipeSerializer(serializers.ModelSerializer):
             return self.set_ingredients_tags(validated_data, instance)
 
     @staticmethod
-    def exist_in_queryset(user, model, obj):
-        if user.is_authenticated:
-            return model.objects.filter(user=user, recipe=obj).exists()
-        return False
+    def get_is_favorited(obj):
+        return bool(getattr(obj, 'is_favorited_for_user', []))
 
-    def get_is_favorited(self, obj):
-        request = self.context.get('request')
-        if not request:
-            return False
-        return self.exist_in_queryset(request.user, RecipeFavorite, obj)
-
-    def get_is_in_shopping_cart(self, obj):
-        request = self.context.get('request')
-        if not request:
-            return False
-        return self.exist_in_queryset(request.user, RecipeShoppingCart, obj)
+    @staticmethod
+    def get_is_in_shopping_cart(obj):
+        return bool(getattr(obj, 'is_in_shopping_cart_for_user', []))
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
