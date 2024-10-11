@@ -1,3 +1,5 @@
+import tempfile
+
 import pytest
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -10,6 +12,13 @@ MESSAGE = 'Данные ответа не соответствуют ожида�
 PASSWORD = '12wnk1ej21'
 NOT_PASSWORD = 'sdflsd123'
 NEW_PASSWORD = 'm2kl31DA4'
+
+
+@pytest.fixture(autouse=True)
+def override_media_root(settings):
+    temp_dir = tempfile.mkdtemp()
+    settings.MEDIA_ROOT = temp_dir
+    yield
 
 
 @pytest.fixture
