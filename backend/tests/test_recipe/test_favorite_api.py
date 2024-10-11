@@ -21,7 +21,8 @@ def check_is_favorite(response):
          lazy_fixture('recipe_is_favorite'), lazy_fixture('recipe_id'),
          True, True),
         (lazy_fixture('api_client_anon'), status.HTTP_401_UNAUTHORIZED,
-         lazy_fixture('create_recipe'), lazy_fixture('recipe_id'), False, False),
+         lazy_fixture('create_recipe'), lazy_fixture('recipe_id'),
+         False, False),
         (lazy_fixture('user_auth'), status.HTTP_404_NOT_FOUND,
          lazy_fixture('create_recipe'), 100, False, False),
     )

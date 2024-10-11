@@ -1,5 +1,4 @@
 import base64
-from pprint import pprint
 
 import pytest
 from django.contrib.auth import get_user_model

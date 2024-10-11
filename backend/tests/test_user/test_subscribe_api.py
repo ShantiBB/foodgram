@@ -11,6 +11,7 @@ def check_follow(follower_user, create_user, status_code):
     )
     return followed_user.exists()
 
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     'user, status_code', (

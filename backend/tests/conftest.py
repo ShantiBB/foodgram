@@ -54,7 +54,7 @@ def api_client_not_author():
 @pytest.fixture
 def create_user(api_client, valid_user_data):
     url = reverse('user-list')
-    response = api_client.post(url, valid_user_data, format='json')
+    api_client.post(url, valid_user_data, format='json')
     user = User.objects.get(
         email=valid_user_data['email'],
         username=valid_user_data['username']
@@ -282,7 +282,7 @@ def get_downloaded_shopping_cart(recipe_is_in_shopping_cart):
 @pytest.fixture
 def create_recipe(user_auth, valid_recipe_data):
     url = reverse('recipe-list')
-    response = user_auth.post(url, valid_recipe_data, format='json')
+    user_auth.post(url, valid_recipe_data, format='json')
     recipe = Recipe.objects.get(name=valid_recipe_data['name'])
     return recipe
 
@@ -305,7 +305,7 @@ def recipe_for_filters(user_auth, valid_recipe_data, tag_two):
 @pytest.fixture
 def recipe_is_favorite(user_auth, recipe_for_filters):
     url = reverse('recipe-favorite', args=[recipe_for_filters.id])
-    response = user_auth.post(url, format='json')
+    user_auth.post(url, format='json')
     return recipe_for_filters
 
 
@@ -313,7 +313,7 @@ def recipe_is_favorite(user_auth, recipe_for_filters):
 def recipe_is_in_shopping_cart(user_auth, recipe_for_filters):
     recipe_id = recipe_for_filters.id
     url = reverse('recipe-shopping-cart', args=[recipe_id])
-    response = user_auth.post(url, format='json')
+    user_auth.post(url, format='json')
     return recipe_for_filters
 
 
@@ -342,7 +342,7 @@ def unsubscribed_user_auth(subscribe_client, follower_user):
 def subscribed_user_auth(subscribe_client, create_user, follower_user):
     subscribe_client.force_authenticate(user=follower_user)
     url = reverse('subscribe', args=[create_user.id])
-    response = subscribe_client.post(url, format='json')
+    subscribe_client.post(url, format='json')
     return subscribe_client
 
 

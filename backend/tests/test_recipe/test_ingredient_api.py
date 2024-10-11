@@ -43,4 +43,3 @@ def test_valid_field_ingredient(user_auth, ingredient, valid_recipe_data):
     ]
     response = user_auth.post(url, valid_recipe_data, format='json')
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-
