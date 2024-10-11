@@ -297,7 +297,7 @@ def recipe_for_filters(user_auth, valid_recipe_data, tag_two):
     url = reverse('recipe-list')
     valid_recipe_data['name'] = 'recipe_for_filters'
     valid_recipe_data['tags'] = [tag_two.id]
-    response = user_auth.post(url, valid_recipe_data, format='json')
+    user_auth.post(url, valid_recipe_data, format='json')
     recipe = Recipe.objects.get(name=valid_recipe_data['name'])
     return recipe
 
