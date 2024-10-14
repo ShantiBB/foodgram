@@ -3,6 +3,7 @@ import tempfile
 import pytest
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+
 from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag
 from rest_framework.test import APIClient
 
@@ -38,11 +39,10 @@ def admin_client():
 
 @pytest.fixture
 def admin_auth(admin_client):
-    User.objects.create(
-        email='admin@mail.ru', username='admin', password=PASSWORD,
-        is_superuser=True
+    user = User.objects.create_superuser(
+        email='admin@mail.ru', username='admin', password=PASSWORD
     )
-    admin_client.force_authenticate(user=User.objects.get(username='admin'))
+    admin_client.force_authenticate(user=user)
     return admin_client
 
 
@@ -53,7 +53,7 @@ def api_client_not_author():
 
 @pytest.fixture
 def create_user(api_client, valid_user_data):
-    url = reverse('user-list')
+    url = reverse('customuser-list')
     api_client.post(url, valid_user_data, format='json')
     user = User.objects.get(
         email=valid_user_data['email'],

@@ -1,13 +1,14 @@
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from drf_extra_fields.fields import Base64ImageField
-from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag
 from rest_framework import serializers
-from user.models import Follow
+from drf_extra_fields.fields import Base64ImageField
+from rest_framework.exceptions import AuthenticationFailed
 
 from .mixins import PasswordChangeMixin, PasswordMixin
 from .validation import (validate_ingredient_data, validate_recipes_limit,
                          validate_tags_and_ingredients)
+from user.models import Follow
+from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag
 
 User = get_user_model()
 
@@ -43,7 +44,9 @@ class UserCreateSerializer(PasswordMixin):
 
 class UserFollowSerializer(serializers.ModelSerializer):
     recipes = serializers.SerializerMethodField()
-    is_subscribed = serializers.ReadOnlyField()
+    # queryset фильтрует пользователей с подпиской, поэтому присвоил данному
+    # полю True по умолчанию, чтобы не делать лишние запросы в бд
+    is_subscribed = serializers.BooleanField(default=True)
     recipes_count = serializers.IntegerField(read_only=True)
 
     class Meta:
@@ -92,7 +95,6 @@ class IngredientSerializer(serializers.ModelSerializer):
 
 class RecipeIngredientSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='ingredient.id')
-    amount = serializers.IntegerField(required=True)
     name = serializers.CharField(
         source='ingredient.name', read_only=True
     )

@@ -52,7 +52,7 @@ def model_delete(url, item, model, user, status_code, prev_count, next_count):
 
 @pytest.mark.django_db
 def test_create_user_only_admin(admin_auth, valid_user_data_for_admin):
-    url = reverse('user-list')
+    url = reverse('customuser-list')
     model_create(
         url, User, valid_user_data_for_admin, 1, 2,
         admin_auth, status.HTTP_201_CREATED
@@ -63,7 +63,7 @@ def test_create_user_only_admin(admin_auth, valid_user_data_for_admin):
 def test_update_user_only_admin(
         admin_auth, create_user, valid_user_data_for_admin
 ):
-    url = reverse('user-detail', args=[create_user.id])
+    url = reverse('customuser-detail', args=[create_user.id])
     model_update(
         url, create_user, User, valid_user_data_for_admin,
         admin_auth, status.HTTP_200_OK, flag=True
@@ -80,7 +80,7 @@ def test_update_user_only_admin(
 def test_update_user_other(
         user, status_code, follower_user, valid_user_data_for_admin
 ):
-    url = reverse('user-detail', args=[follower_user.id])
+    url = reverse('customuser-detail', args=[follower_user.id])
     model_update(
         url, follower_user, User, valid_user_data_for_admin,
         user, status_code, flag=False
@@ -98,7 +98,7 @@ def test_update_user_other(
 def test_delete_user_only_admin(
         user, status_code, prev_count, next_count, follower_user
 ):
-    url = reverse('user-detail', args=[follower_user.id])
+    url = reverse('customuser-detail', args=[follower_user.id])
     model_delete(
         url, follower_user, User, user, status_code, prev_count, next_count
     )

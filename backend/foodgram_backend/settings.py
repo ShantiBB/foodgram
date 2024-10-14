@@ -26,7 +26,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS').split(', ')
 
@@ -40,10 +40,12 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django_cleanup.apps.CleanupConfig',
+    'django_extensions',
     'django_filters',
     'rest_framework',
-    'corsheaders',
     'rest_framework.authtoken',
+    'djoser',
+    'corsheaders',
     'user.apps.UserConfig',
     'recipe.apps.RecipeConfig'
 ]
@@ -159,3 +161,20 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 CORS_URLS_REGEX = r'^/api/.*$'
+
+DJOSER = {
+    'USER_ID_FIELD': 'id',
+    'HIDE_USERS': False,
+    'SERIALIZERS': {
+        'user_create': 'api.serializers.UserCreateSerializer',
+        'user': 'api.serializers.UserDetailSerializer',
+        'current_user': 'api.serializers.UserDetailSerializer',
+        'user_list': 'api.serializers.UserDetailSerializer',
+    },
+    'PERMISSIONS': {
+        'user_create': ['api.permissions.IsAdminOrAnonimOrReadOnly'],
+        'user': ['rest_framework.permissions.AllowAny'],
+        'user_list': ['rest_framework.permissions.AllowAny'],
+        'token_create': ['api.permissions.IsAdminOrAnonimOrReadOnly']
+    },
+}

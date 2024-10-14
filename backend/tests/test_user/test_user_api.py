@@ -12,7 +12,7 @@ User = get_user_model()
 
 @pytest.mark.django_db
 def test_users_list(api_client_anon, create_user, get_user_data):
-    url = reverse('user-list')
+    url = reverse('customuser-list')
     response = api_client_anon.get(url)
     assert response.status_code == status.HTTP_200_OK
     get_user_data['id'] = User.objects.first().id
@@ -34,7 +34,7 @@ def test_user_create(
     user, status_code, prev_count, next_count,
     data, user_data_after_reg
 ):
-    url = reverse('user-list')
+    url = reverse('customuser-list')
     assert User.objects.all().count() == prev_count
     response = user.post(url, data, format='json')
     assert response.status_code == status_code
@@ -58,7 +58,7 @@ def test_user_create(
     )
 )
 def test_user_detail(user, user_id_or_me, status_code, get_user_data):
-    url = reverse('user-detail', args=[user_id_or_me])
+    url = reverse('customuser-detail', args=[user_id_or_me])
     response = user.get(url)
     assert response.status_code == status_code
     if status_code == status.HTTP_200_OK:
@@ -109,7 +109,7 @@ def test_user_avatar(user, data, status_code, create_user):
 )
 @pytest.mark.django_db
 def test_user_set_password(user, create_user, password_data, status_code):
-    url = reverse('set_password')
+    url = reverse('customuser-set-password')
     if status_code == status.HTTP_204_NO_CONTENT:
         assert create_user.check_password(
             password_data.get('current_password')
@@ -128,7 +128,7 @@ def test_user_set_password(user, create_user, password_data, status_code):
         (lazy_fixture('api_client_anon'), lazy_fixture('invalid_token_data'),
          status.HTTP_400_BAD_REQUEST),
         (lazy_fixture('user_auth'), lazy_fixture('valid_token_data'),
-         status.HTTP_400_BAD_REQUEST),
+         status.HTTP_403_FORBIDDEN),
     )
 )
 @pytest.mark.django_db

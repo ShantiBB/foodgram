@@ -1,71 +1,72 @@
-from django.contrib.auth import get_user_model
-from django.db.models import (BooleanField, Count, Exists, OuterRef, Prefetch,
-                              Sum, Value)
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
-from django_filters.rest_framework import DjangoFilterBackend
-from recipe.models import (Ingredient, Recipe, RecipeFavorite,
-                           RecipeIngredient, RecipeShoppingCart, Tag)
+from django.contrib.auth import get_user_model
+from django.db.models import Count, Exists, OuterRef, Prefetch, Sum
 from rest_framework import generics, mixins, status, viewsets
-from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from user.models import Follow
+from django_filters.rest_framework import DjangoFilterBackend
+from djoser.views import UserViewSet
 
 from .filters import IngredientFilter, RecipeFilter
-from .permissions import (IsAdminOrAuthorOrReadOnly,
-                          IsAdminOrNotAuthenticatedOrReadOnly,
-                          IsAdminOrReadOnly)
-from .serializers import (IngredientSerializer, PasswordChangeSerializer,
-                          RecipeSerializer, RecipeShortSerializer,
-                          TagSerializer, UserAvatarSerializer,
-                          UserCreateSerializer, UserDetailSerializer,
-                          UserFollowSerializer)
-from .validation import (authenticate_user_for_token,
-                         create_or_remove_favorite_or_shopping_cart,
-                         validate_email_and_password, validate_new_password,
-                         validate_object_existence, validate_subscribe,
-                         validate_user_authenticated,
-                         validate_user_not_authenticated)
+from .permissions import (IsAdminOrAuthorOrReadOnly, IsAdminOrReadOnly,
+                          IsAdminOrAnonimOrReadOnly)
+from .serializers import (IngredientSerializer, RecipeSerializer,
+                          RecipeShortSerializer, TagSerializer,
+                          UserAvatarSerializer, UserFollowSerializer)
+from .validation import (create_or_remove_favorite_or_shopping_cart,
+                         validate_object_existence, validate_subscribe)
+from user.models import Follow
+from recipe.models import (Ingredient, Recipe, RecipeFavorite,
+                           RecipeIngredient, RecipeShoppingCart, Tag)
 
 User = get_user_model()
 
 
-class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
-    permission_classes = [IsAdminOrNotAuthenticatedOrReadOnly]
-    http_method_names = ('get', 'post', 'patch', 'delete')
+class CustomUserViewSet(UserViewSet):
+    permission_classes = [IsAdminOrAnonimOrReadOnly]
 
-    def get_serializer_class(self):
-        if self.action == 'create' or self.action == 'update':
-            return UserCreateSerializer
-        return UserDetailSerializer
-
-    def update(self, request, *args, **kwargs):
+    def partial_update(self, request, *args, **kwargs):
+        """Позволяет администратору менять пароль пользователя."""
+        user = self.get_object()
         if 'password' in request.data:
-            user = self.get_object()
-            password = request.data.get('password')
-            validation_response = validate_new_password(
-                user.password, password
-            )
-            if validation_response:
-                return validation_response
+            password = request.data['password']
             user.set_password(password)
             user.save()
-            return Response(
-                {"status": "Пароль успешно обновлён"},
-                status=status.HTTP_200_OK
-            )
-        return super().update(request, *args, **kwargs)
+            return Response(status=status.HTTP_200_OK)
+        return super().partial_update(request, *args, **kwargs)
 
-    @action(
-        detail=False, methods=['get'], permission_classes=[IsAuthenticated]
-    )
-    def me(self, request):
-        serializer = self.get_serializer(request.user)
-        return Response(serializer.data)
+    def destroy(self, request, *args, **kwargs):
+        """Позволяет администратору удалять пользователя."""
+        user = self.get_object()
+        user.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AvatarUpdateDeleteView(
+    mixins.UpdateModelMixin,
+    generics.GenericAPIView
+):
+    queryset = User.objects.all()
+    serializer_class = UserAvatarSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        return self.request.user
+
+    def put(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def delete(self, request, *args, **kwargs):
+        avatar = self.get_object().avatar
+        if avatar:
+            avatar.delete(save=True)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(
+            {'status': 'Аватар отсутствует'}, status=status.HTTP_404_NOT_FOUND
+        )
 
 
 class FollowListView(generics.ListAPIView):
@@ -77,8 +78,7 @@ class FollowListView(generics.ListAPIView):
         queryset = User.objects.filter(
             followings__follower=follower
         ).annotate(
-            recipes_count=Count('recipes', distinct=True),
-            is_subscribed=Value(True, output_field=BooleanField())
+            recipes_count=Count('recipes', distinct=True)
         ).prefetch_related(
             Prefetch(
                 'recipes',
@@ -126,76 +126,16 @@ class FollowView(generics.UpdateAPIView):
         return self.handle_subscribe(request, following)
 
 
-class PasswordChangeView(generics.UpdateAPIView):
-    serializer_class = PasswordChangeSerializer
-    permission_classes = [IsAuthenticated]
-    http_method_names = ['post']
-
-    def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(
-            data=request.data, context={'request': request}
-        )
-        serializer.is_valid(raise_exception=True)
-        user = request.user
-        user.set_password(serializer.validated_data['new_password'])
-        user.save()
-        return Response(
-            {'status': 'Пароль успешно изменен'},
-            status=status.HTTP_204_NO_CONTENT
-        )
-
-
-class AvatarUpdateDeleteView(
-    mixins.UpdateModelMixin,
-    generics.GenericAPIView
-):
-    queryset = User.objects.all()
-    serializer_class = UserAvatarSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_object(self):
-        return self.request.user
-
-    def put(self, request, *args, **kwargs):
-        return self.update(request, *args, **kwargs)
-
-    def delete(self, request, *args, **kwargs):
-        avatar = self.get_object().avatar
-        if avatar:
-            avatar.delete(save=True)
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        return Response(
-            {'status': 'Аватар отсутствует'}, status=status.HTTP_404_NOT_FOUND
-        )
-
-
-class TokenLoginView(APIView):
-    @staticmethod
-    def post(request):
-        email = request.data.get('email')
-        password = request.data.get('password')
-        validate_email_and_password(email, password)
-        user = authenticate_user_for_token(email, password)
-        validate_user_authenticated(request)
-        token, _ = Token.objects.get_or_create(user=user)
-        return Response({'auth_token': token.key}, status=status.HTTP_200_OK)
-
-
-class TokenLogoutView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @staticmethod
-    def post(request):
-        request.user.auth_token.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
 class RecipeViewSet(viewsets.ModelViewSet):
     serializer_class = RecipeSerializer
     permission_classes = [IsAdminOrAuthorOrReadOnly]
     http_method_names = ('get', 'post', 'patch', 'delete')
     filter_backends = [DjangoFilterBackend]
     filterset_class = RecipeFilter
+
+    @staticmethod
+    def get_model(model, user):
+        return model.objects.filter(user=user, recipe=OuterRef('pk'))
 
     def get_queryset(self):
         user = self.request.user
@@ -205,28 +145,18 @@ class RecipeViewSet(viewsets.ModelViewSet):
             'recipe_ingredients__ingredient',
         )
         if user.is_authenticated:
-            queryset = queryset.prefetch_related(
-                Prefetch(
-                    'is_favorited',
-                    queryset=User.objects.filter(pk=user.pk),
-                    to_attr='is_favorited_for_user'
+            queryset = queryset.annotate(
+                is_favorited_for_user=Exists(
+                    self.get_model(RecipeFavorite, user)
                 ),
-                Prefetch(
-                    'is_in_shopping_cart',
-                    queryset=User.objects.filter(pk=user.pk),
-                    to_attr='is_in_shopping_cart_for_user'
-                ),
+                is_in_shopping_cart_for_user=Exists(
+                    self.get_model(RecipeShoppingCart, user)
+                )
             )
         return queryset
 
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
-
-    def create(self, request, *args, **kwargs):
-        validate_user_not_authenticated(request.user)
-        response = super().create(request, *args, **kwargs)
-        response.status_code = status.HTTP_201_CREATED
-        return response
 
     @action(
         detail=True, methods=['post', 'delete'],
