@@ -8,6 +8,7 @@ defusedxml==0.8.0rc2
 Django==3.2
 django-cleanup==9.0.0
 django-cors-headers==4.4.0
+django-extensions==3.2.3
 django-filter==23.1
 django-templated-mail==1.1.1
 djangorestframework==3.12.4
