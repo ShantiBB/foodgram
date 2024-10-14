@@ -2,7 +2,6 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from rest_framework import serializers
 from drf_extra_fields.fields import Base64ImageField
-from rest_framework.exceptions import AuthenticationFailed
 
 from .mixins import PasswordChangeMixin, PasswordMixin
 from .validation import (validate_ingredient_data, validate_recipes_limit,

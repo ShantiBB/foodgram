@@ -1,4 +1,3 @@
-from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 
