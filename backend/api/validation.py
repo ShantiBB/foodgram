@@ -67,8 +67,9 @@ def get_updated_user_data(following):
     return updated_user
 
 
-def validate_object_existence(model, user, recipe, exists_message,
-                              not_exists_message, method):
+def validate_object_existence(
+        model, user, recipe, method, exists_message, not_exists_message
+):
     obj_exists = model.objects.filter(user=user, recipe=recipe).exists()
 
     if method == 'POST' and obj_exists:

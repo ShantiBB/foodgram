@@ -1,6 +1,12 @@
+import hashlib
+import os
+
 from django.contrib.auth.hashers import make_password
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, UserManager
+from django.core.files.base import ContentFile
 from django.db import models
+
+from .managers import UserFollowManager
 
 
 class CustomUser(AbstractUser):
@@ -15,6 +21,8 @@ class CustomUser(AbstractUser):
     avatar = models.ImageField(
         upload_to='img/avatar/', null=True, blank=True, verbose_name='Аватар'
     )
+    objects = UserManager()
+    follows = UserFollowManager()
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username']

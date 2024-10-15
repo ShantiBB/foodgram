@@ -1,13 +1,23 @@
+import hashlib
+import os
+from lib2to3.fixes.fix_input import context
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 from rest_framework import serializers
 from drf_extra_fields.fields import Base64ImageField
+from rest_framework.exceptions import ValidationError
+from urllib3 import request
 
 from .mixins import PasswordChangeMixin, PasswordMixin
 from .validation import (validate_ingredient_data, validate_recipes_limit,
-                         validate_tags_and_ingredients)
+                         validate_tags_and_ingredients, validate_subscribe,
+                         validate_object_existence)
 from user.models import Follow
-from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag
+from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag, \
+    RecipeFavorite
 
 User = get_user_model()
 
@@ -43,10 +53,8 @@ class UserCreateSerializer(PasswordMixin):
 
 class UserFollowSerializer(serializers.ModelSerializer):
     recipes = serializers.SerializerMethodField()
-    # queryset фильтрует пользователей с подпиской, поэтому присвоил данному
-    # полю True по умолчанию, чтобы не делать лишние запросы в бд
     is_subscribed = serializers.BooleanField(default=True)
-    recipes_count = serializers.IntegerField(read_only=True)
+    recipes_count = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -54,6 +62,14 @@ class UserFollowSerializer(serializers.ModelSerializer):
             'email', 'id', 'username', 'first_name',
             'last_name', 'is_subscribed', 'recipes', 'recipes_count', 'avatar'
         )
+        read_only_fields = ('email', 'username', 'first_name', 'last_name')
+
+    def get_recipes_count(self, obj):
+        recipes_count = self.context.get('recipes_count', 0)
+        if recipes_count:
+            return recipes_count
+        return getattr(obj, 'recipes_count', [])
+
 
     def get_recipes(self, obj):
         request = self.context.get('request')
@@ -66,6 +82,30 @@ class UserFollowSerializer(serializers.ModelSerializer):
         )
         return serializer.data
 
+    def get_follower_and_following_user(self):
+        follower = self.context.get('follower')
+        following = self.context.get('following')
+        return follower, following
+
+    def create(self, validated_data):
+        follower, following = self.get_follower_and_following_user()
+        follow, created = Follow.objects.get_or_create(
+            follower=follower, following=following
+        )
+        return following
+
+    def delete(self):
+        follower, following = self.get_follower_and_following_user()
+        follow = Follow.objects.filter(follower=follower, following=following)
+        follow.delete()
+        return following
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        following = self.get_follower_and_following_user()[1]
+        validate_subscribe(request, following)
+        return attrs
+
 
 class UserAvatarSerializer(serializers.ModelSerializer):
     avatar = Base64ImageField(required=True)
@@ -74,10 +114,12 @@ class UserAvatarSerializer(serializers.ModelSerializer):
         model = User
         fields = ('avatar',)
 
-
-class PasswordChangeSerializer(PasswordChangeMixin):
-    current_password = serializers.CharField(required=True)
-    new_password = serializers.CharField(required=True)
+    def delete(self, *args, **kwargs):
+        user = self.instance
+        if user.avatar:
+            user.avatar.delete(save=True)
+            user.avatar_hash = None
+        return user
 
 
 class TagSerializer(serializers.ModelSerializer):
@@ -208,3 +250,29 @@ class RecipeShortSerializer(serializers.ModelSerializer):
     class Meta:
         model = Recipe
         fields = ('id', 'name', 'image', 'cooking_time')
+        read_only_fields = ('id', 'name', 'image', 'cooking_time')
+
+    @staticmethod
+    def get_context_obj(**kwargs):
+        return list(kwargs.values())
+
+    def create(self, validated_data):
+        model, recipe, user = self.get_context_obj(**self.context)[1:]
+        model.objects.get_or_create(user=user, recipe=recipe)
+        return recipe
+
+    def delete(self):
+        model, recipe, user = self.get_context_obj(**self.context)[1:]
+        model.objects.filter(user=user, recipe=recipe).delete()
+        return recipe
+
+    def validate(self, attrs):
+        request, model, recipe, user = self.get_context_obj(**self.context)
+        # В документации к api при повторном добавлении и удалении из
+        # избранного должен выбрасываться статус 400, шорткат не подойдет
+        validate_object_existence(
+            model, user, recipe, request.method,
+            exists_message='Рецепт уже добавлен в избранное',
+            not_exists_message='Рецепт уже удален из избранного',
+        )
+        return attrs
