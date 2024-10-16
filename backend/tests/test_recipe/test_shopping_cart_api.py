@@ -3,6 +3,7 @@ from django.urls import reverse
 from pytest_lazyfixture import lazy_fixture
 from recipe.models import RecipeShoppingCart
 from rest_framework import status
+
 from tests.conftest import MESSAGE
 
 
@@ -43,7 +44,7 @@ def test_recipe_shopping_cart(
 def test_download_shopping_cart(
         user_auth, recipe_is_in_shopping_cart, get_downloaded_shopping_cart
 ):
-    url = reverse('download_shopping_cart')
+    url = reverse('recipe-download-shopping-cart')
     response = user_auth.get(url)
     content = response.content.decode('utf-8')
     assert response.status_code == status.HTTP_200_OK

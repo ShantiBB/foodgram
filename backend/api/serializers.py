@@ -1,23 +1,13 @@
-import hashlib
-import os
-from lib2to3.fixes.fix_input import context
-
-from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.shortcuts import get_object_or_404
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from drf_extra_fields.fields import Base64ImageField
-from rest_framework.exceptions import ValidationError
-from urllib3 import request
 
-from .mixins import PasswordChangeMixin, PasswordMixin
-from .validation import (validate_ingredient_data, validate_recipes_limit,
+from .validation import (validate_ingredient_data, validate_object_existence,
                          validate_tags_and_ingredients, validate_subscribe,
-                         validate_object_existence)
+                         validate_recipes_limit)
 from user.models import Follow
-from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag, \
-    RecipeFavorite
+from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag
 
 User = get_user_model()
 
@@ -29,8 +19,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'email', 'id', 'username', 'first_name',
-            'last_name', 'is_subscribed', 'avatar'
+            'last_name', 'is_subscribed', 'avatar', 'password'
         )
+        extra_kwargs = {'password': {'write_only': True}}
 
     def get_is_subscribed(self, obj):
         request = self.context.get('request')
@@ -41,7 +32,12 @@ class UserDetailSerializer(serializers.ModelSerializer):
         return False
 
 
-class UserCreateSerializer(PasswordMixin):
+class UserCreateSerializer(serializers.ModelSerializer):
+    # По поводу валидации username и email: Из-за наличия unique=True у полей
+    # email и username, как я понял, валидация происходит на уровне бд.
+    # Отключить unique можно только для username, поэтому не вижу необходимости
+    # разделять логику валидации email и username.
+
     class Meta:
         model = User
         fields = (
@@ -69,7 +65,6 @@ class UserFollowSerializer(serializers.ModelSerializer):
         if recipes_count:
             return recipes_count
         return getattr(obj, 'recipes_count', [])
-
 
     def get_recipes(self, obj):
         request = self.context.get('request')
@@ -114,24 +109,17 @@ class UserAvatarSerializer(serializers.ModelSerializer):
         model = User
         fields = ('avatar',)
 
-    def delete(self, *args, **kwargs):
-        user = self.instance
-        if user.avatar:
-            user.avatar.delete(save=True)
-            user.avatar_hash = None
-        return user
-
 
 class TagSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tag
-        fields = ('id', 'name', 'slug')
+        fields = '__all__'
 
 
 class IngredientSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ingredient
-        fields = ('id', 'name', 'measurement_unit')
+        fields = '__all__'
 
 
 class RecipeIngredientSerializer(serializers.ModelSerializer):
@@ -148,10 +136,11 @@ class RecipeIngredientSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'amount', 'measurement_unit')
 
 
-class RecipeSerializer(serializers.ModelSerializer):
-    tags = serializers.PrimaryKeyRelatedField(
-        queryset=Tag.objects.all(), many=True, required=True
-    )
+class RecipeReadSerializer(serializers.ModelSerializer):
+    # Рецепты в избранном и в списке покупок отображаются при помощи фильтрации
+    # Отдельных get запросов не требуется (в отличие от подписок), поэтому
+    # не совсем понимаю зачем нужны отдельные сериализаторы под это
+    tags = TagSerializer(many=True)
     author = UserDetailSerializer(read_only=True)
     ingredients = RecipeIngredientSerializer(
         source='recipe_ingredients',
@@ -167,6 +156,33 @@ class RecipeSerializer(serializers.ModelSerializer):
             'id', 'tags', 'author', 'ingredients', 'is_favorited',
             'is_in_shopping_cart', 'name', 'image', 'text', 'cooking_time'
         )
+
+    @staticmethod
+    def get_is_favorited(obj):
+        return bool(getattr(obj, 'is_favorited_for_user', []))
+
+    @staticmethod
+    def get_is_in_shopping_cart(obj):
+        return bool(getattr(obj, 'is_in_shopping_cart_for_user', []))
+
+
+class RecipeWriteSerializer(serializers.ModelSerializer):
+    tags = serializers.PrimaryKeyRelatedField(
+        queryset=Tag.objects.all(), many=True, required=True
+    )
+    ingredients = RecipeIngredientSerializer(
+        source='recipe_ingredients',
+        many=True
+    )
+    image = Base64ImageField()
+
+    class Meta:
+        model = Recipe
+        fields = (
+            'id', 'ingredients', 'tags', 'author',
+            'image', 'name', 'text', 'cooking_time'
+        )
+        read_only_fields = ('author',)
 
     @staticmethod
     def pop_items(validated_data):
@@ -231,22 +247,11 @@ class RecipeSerializer(serializers.ModelSerializer):
         with transaction.atomic():
             return self.set_ingredients_tags(validated_data, instance)
 
-    @staticmethod
-    def get_is_favorited(obj):
-        return bool(getattr(obj, 'is_favorited_for_user', []))
-
-    @staticmethod
-    def get_is_in_shopping_cart(obj):
-        return bool(getattr(obj, 'is_in_shopping_cart_for_user', []))
-
-    def to_representation(self, instance):
-        representation = super().to_representation(instance)
-        tags = instance.tags.all()
-        representation['tags'] = TagSerializer(tags, many=True).data
-        return representation
-
 
 class RecipeShortSerializer(serializers.ModelSerializer):
+    # Под запись рецептов в избранное и список покупок отвечает этот
+    # сериализатор, не вижу смысл разделять его, ведь тогда будет повторяться
+    # одна и та же логика
     class Meta:
         model = Recipe
         fields = ('id', 'name', 'image', 'cooking_time')
@@ -272,7 +277,7 @@ class RecipeShortSerializer(serializers.ModelSerializer):
         # избранного должен выбрасываться статус 400, шорткат не подойдет
         validate_object_existence(
             model, user, recipe, request.method,
-            exists_message='Рецепт уже добавлен в избранное',
-            not_exists_message='Рецепт уже удален из избранного',
+            exists_message='Рецепт уже добавлен',
+            not_exists_message='Рецепт уже удален'
         )
         return attrs

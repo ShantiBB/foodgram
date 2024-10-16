@@ -1,14 +1,15 @@
 from django.contrib.auth import get_user_model
 from django.db.models import Case, IntegerField, When
-from django_filters import CharFilter, FilterSet
+from django_filters import FilterSet
 from django_filters import rest_framework as filters
+from rest_framework.filters import SearchFilter
 
-from recipe.models import Ingredient, Recipe, Tag
+from recipe.models import Recipe, Tag
 
 User = get_user_model()
 
 
-class RecipeFilter(filters.FilterSet):
+class RecipeFilter(FilterSet):
     tags = filters.ModelMultipleChoiceFilter(
         field_name='tags__slug',
         to_field_name='slug',
@@ -27,22 +28,18 @@ class RecipeFilter(filters.FilterSet):
         fields = ['author', 'tags', 'is_favorited', 'is_in_shopping_cart']
 
 
-class IngredientFilter(FilterSet):
-    name = CharFilter(method='filter_name')
+class IngredientFilter(SearchFilter):
+    search_param = 'name'
 
-    class Meta:
-        model = Ingredient
-        fields = ['name']
-
-    @staticmethod
-    def filter_name(queryset, name, value):
-        queryset = queryset.annotate(
-            starts_with=Case(
-                When(name__istartswith=value, then=1),
-                default=0,
-                output_field=IntegerField(),
-            )
-        )
-        queryset = queryset.filter(name__icontains=value)
-        queryset = queryset.order_by('-starts_with', 'name')
+    def filter_queryset(self, request, queryset, view):
+        search_value = request.query_params.get(self.search_param, '')
+        if search_value:
+            queryset = queryset.annotate(
+                starts_with=Case(
+                    When(name__istartswith=search_value, then=1),
+                    default=0,
+                    output_field=IntegerField(),
+                )
+            ).filter(name__icontains=search_value)
+            queryset = queryset.order_by('-starts_with', 'name')
         return queryset

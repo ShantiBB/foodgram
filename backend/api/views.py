@@ -6,16 +6,16 @@ from rest_framework import generics, mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from djoser.views import UserViewSet
 
 from .filters import IngredientFilter, RecipeFilter
 from .permissions import (IsAdminOrAuthorOrReadOnly, IsAdminOrReadOnly,
                           IsAdminOrAnonimOrReadOnly)
-from .serializers import (IngredientSerializer, RecipeSerializer,
+from .serializers import (IngredientSerializer, RecipeReadSerializer,
                           RecipeShortSerializer, TagSerializer,
-                          UserAvatarSerializer, UserFollowSerializer)
+                          RecipeWriteSerializer, UserAvatarSerializer,
+                          UserFollowSerializer)
 from recipe.models import (Ingredient, Recipe, RecipeFavorite,
                            RecipeIngredient, RecipeShoppingCart, Tag)
 
@@ -25,16 +25,6 @@ User = get_user_model()
 class CustomUserViewSet(UserViewSet):
     permission_classes = [IsAdminOrAnonimOrReadOnly]
 
-    def partial_update(self, request, *args, **kwargs):
-        """Позволяет администратору менять пароль пользователя."""
-        user = self.get_object()
-        if 'password' in request.data:
-            password = request.data['password']
-            user.set_password(password)
-            user.save()
-            return Response(status=status.HTTP_200_OK)
-        return super().partial_update(request, *args, **kwargs)
-
     def destroy(self, request, *args, **kwargs):
         """Позволяет администратору удалять пользователя."""
         user = self.get_object()
@@ -42,22 +32,22 @@ class CustomUserViewSet(UserViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(
-        detail=False, methods=['PUT', 'DELETE'],
+        detail=False, methods=['PUT'],
         url_path='me/avatar', permission_classes=[IsAuthenticated],
         serializer_class=UserAvatarSerializer,
     )
-
     def avatar(self, request):
         user = request.user
-        avatar = user.avatar
         serializer = self.get_serializer(user, data=request.data)
-        if request.method == 'PUT':
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @avatar.mapping.delete
+    def delete_avatar(self, request):
+        avatar = request.user.avatar
         if avatar:
-            serializer = self.get_serializer(user)
-            serializer.delete()
+            avatar.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response(status=status.HTTP_404_NOT_FOUND)
 
@@ -91,6 +81,8 @@ class FollowView(
         return self.create(request, *args, **kwargs)
 
     def delete(self, request, *args, **kwargs):
+        # Удаление идет через сериализатор так как удаляется не сам объект,
+        # а подписка на него, плюс идет валидация
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.delete()
@@ -98,11 +90,17 @@ class FollowView(
 
 
 class RecipeViewSet(viewsets.ModelViewSet):
-    serializer_class = RecipeSerializer
     permission_classes = [IsAdminOrAuthorOrReadOnly]
     http_method_names = ('get', 'post', 'patch', 'delete')
     filter_backends = [DjangoFilterBackend]
     filterset_class = RecipeFilter
+
+    def get_serializer_class(self):
+        if self.action in ('list', 'retrieve'):
+            return RecipeReadSerializer
+        elif self.action in ('create', 'update', 'partial_update'):
+            return RecipeWriteSerializer
+        return super().get_serializer_class()
 
     @staticmethod
     def get_model(model, user):
@@ -126,39 +124,73 @@ class RecipeViewSet(viewsets.ModelViewSet):
             )
         return queryset
 
-    def perform_create(self, serializer):
-        serializer.save(author=self.request.user)
+    def create_or_update_serializer(
+            self, request, instance=None, partial=False
+    ):
+        context = {'request': request}
+        serializer = self.get_serializer(
+            instance=instance, data=request.data, partial=partial
+        )
+        serializer.is_valid(raise_exception=True)
+        recipe = serializer.save(author=self.request.user)
+        read_serializer = RecipeReadSerializer(recipe, context=context)
+        return read_serializer
 
-    def handle_models(self, model, request, pk):
+    def create(self, request, *args, **kwargs):
+        read_serializer = self.create_or_update_serializer(request)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        read_serializer = self.create_or_update_serializer(
+            request, instance=instance, partial=True
+        )
+        return Response(read_serializer.data, status=status.HTTP_200_OK)
+
+    def get_recipe_context(self, model, request, pk):
         recipe = get_object_or_404(Recipe, id=pk)
         context = {
-            'request': request, 'model': model,
-            'recipe': recipe, 'user': request.user
+            'request': request,
+            'model': model,
+            'recipe': recipe,
+            'user': request.user
         }
         serializer = self.get_serializer(data=request.data, context=context)
-        if request.method == 'POST':
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
         serializer.is_valid(raise_exception=True)
+        return serializer
+
+    def handle_post(self, model, request, pk):
+        serializer = self.get_recipe_context(model, request, pk)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def handle_delete(self, model, request, pk):
+        # Так же удаление идет по тому же принципу, что и выше
+        serializer = self.get_recipe_context(model, request, pk)
         serializer.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(
-        detail=True, methods=['post', 'delete'],
-        permission_classes=[IsAuthenticated],
+        detail=True, methods=['post'], permission_classes=[IsAuthenticated],
         serializer_class=RecipeShortSerializer
     )
     def favorite(self, request, pk=None):
-        return self.handle_models(RecipeFavorite, request, pk)
+        return self.handle_post(RecipeFavorite, request, pk)
+
+    @favorite.mapping.delete
+    def remove_favorite(self, request, pk=None):
+        return self.handle_delete(RecipeFavorite, request, pk)
 
     @action(
-        detail=True, methods=['post', 'delete'],
-        permission_classes=[IsAuthenticated],
+        detail=True, methods=['post'], permission_classes=[IsAuthenticated],
         serializer_class=RecipeShortSerializer
     )
     def shopping_cart(self, request, pk=None):
-        return self.handle_models(RecipeShoppingCart, request, pk)
+        return self.handle_post(RecipeShoppingCart, request, pk)
+
+    @shopping_cart.mapping.delete
+    def remove_from_shopping_cart(self, request, pk=None):
+        return self.handle_delete(RecipeShoppingCart, request, pk)
 
     @action(detail=True, methods=['get'], url_path='get-link')
     def get_link(self, request, pk):
@@ -169,28 +201,10 @@ class RecipeViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
 
-
-class TagViewSet(viewsets.ModelViewSet):
-    queryset = Tag.objects.all()
-    serializer_class = TagSerializer
-    permission_classes = [IsAdminOrReadOnly]
-    pagination_class = None
-    http_method_names = ('get', 'post', 'patch', 'delete')
-
-
-class IngredientViewSet(viewsets.ModelViewSet):
-    queryset = Ingredient.objects.all()
-    serializer_class = IngredientSerializer
-    permission_classes = [IsAdminOrReadOnly]
-    pagination_class = None
-    filter_backends = (DjangoFilterBackend,)
-    filterset_class = IngredientFilter
-    http_method_names = ('get', 'post', 'patch', 'delete')
-
-
-class ShoppingCartDownload(APIView):
-    @staticmethod
-    def get(request):
+    @action(
+        detail=False, methods=['get'], permission_classes=[IsAuthenticated]
+    )
+    def download_shopping_cart(self, request):
         recipes_in_cart = RecipeShoppingCart.objects.filter(
             user=request.user
         ).values_list('recipe_id', flat=True)
@@ -210,5 +224,21 @@ class ShoppingCartDownload(APIView):
             line = f'• {name} — {amount} {measurement_unit}'
             lines.append(line)
         content = '\n'.join(lines)
-        RecipeShoppingCart.objects.filter(user=request.user).delete()
         return HttpResponse(content, content_type='text/plain')
+
+
+class TagViewSet(viewsets.ModelViewSet):
+    queryset = Tag.objects.all()
+    serializer_class = TagSerializer
+    permission_classes = [IsAdminOrReadOnly]
+    pagination_class = None
+    http_method_names = ('get', 'post', 'patch', 'delete')
+
+
+class IngredientViewSet(viewsets.ModelViewSet):
+    queryset = Ingredient.objects.all()
+    serializer_class = IngredientSerializer
+    permission_classes = [IsAdminOrReadOnly]
+    pagination_class = None
+    filter_backends = [IngredientFilter]
+    http_method_names = ('get', 'post', 'patch', 'delete')
