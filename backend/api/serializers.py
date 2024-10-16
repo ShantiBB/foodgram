@@ -1,11 +1,11 @@
-from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from drf_extra_fields.fields import Base64ImageField
 
-from .mixins import PasswordChangeMixin, PasswordMixin
-from .validation import (validate_ingredient_data, validate_recipes_limit,
-                         validate_tags_and_ingredients)
+from .validation import (validate_ingredient_data, validate_object_existence,
+                         validate_tags_and_ingredients, validate_subscribe,
+                         validate_recipes_limit)
 from user.models import Follow
 from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag
 
@@ -19,8 +19,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'email', 'id', 'username', 'first_name',
-            'last_name', 'is_subscribed', 'avatar'
+            'last_name', 'is_subscribed', 'avatar', 'password'
         )
+        extra_kwargs = {'password': {'write_only': True}}
 
     def get_is_subscribed(self, obj):
         request = self.context.get('request')
@@ -31,7 +32,12 @@ class UserDetailSerializer(serializers.ModelSerializer):
         return False
 
 
-class UserCreateSerializer(PasswordMixin):
+class UserCreateSerializer(serializers.ModelSerializer):
+    # По поводу валидации username и email: Из-за наличия unique=True у полей
+    # email и username, как я понял, валидация происходит на уровне бд.
+    # Отключить unique можно только для username, поэтому не вижу необходимости
+    # разделять логику валидации email и username.
+
     class Meta:
         model = User
         fields = (
@@ -43,10 +49,8 @@ class UserCreateSerializer(PasswordMixin):
 
 class UserFollowSerializer(serializers.ModelSerializer):
     recipes = serializers.SerializerMethodField()
-    # queryset фильтрует пользователей с подпиской, поэтому присвоил данному
-    # полю True по умолчанию, чтобы не делать лишние запросы в бд
     is_subscribed = serializers.BooleanField(default=True)
-    recipes_count = serializers.IntegerField(read_only=True)
+    recipes_count = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -54,6 +58,13 @@ class UserFollowSerializer(serializers.ModelSerializer):
             'email', 'id', 'username', 'first_name',
             'last_name', 'is_subscribed', 'recipes', 'recipes_count', 'avatar'
         )
+        read_only_fields = ('email', 'username', 'first_name', 'last_name')
+
+    def get_recipes_count(self, obj):
+        recipes_count = self.context.get('recipes_count', 0)
+        if recipes_count:
+            return recipes_count
+        return getattr(obj, 'recipes_count', [])
 
     def get_recipes(self, obj):
         request = self.context.get('request')
@@ -66,6 +77,30 @@ class UserFollowSerializer(serializers.ModelSerializer):
         )
         return serializer.data
 
+    def get_follower_and_following_user(self):
+        follower = self.context.get('follower')
+        following = self.context.get('following')
+        return follower, following
+
+    def create(self, validated_data):
+        follower, following = self.get_follower_and_following_user()
+        follow, created = Follow.objects.get_or_create(
+            follower=follower, following=following
+        )
+        return following
+
+    def delete(self):
+        follower, following = self.get_follower_and_following_user()
+        follow = Follow.objects.filter(follower=follower, following=following)
+        follow.delete()
+        return following
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        following = self.get_follower_and_following_user()[1]
+        validate_subscribe(request, following)
+        return attrs
+
 
 class UserAvatarSerializer(serializers.ModelSerializer):
     avatar = Base64ImageField(required=True)
@@ -75,21 +110,16 @@ class UserAvatarSerializer(serializers.ModelSerializer):
         fields = ('avatar',)
 
 
-class PasswordChangeSerializer(PasswordChangeMixin):
-    current_password = serializers.CharField(required=True)
-    new_password = serializers.CharField(required=True)
-
-
 class TagSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tag
-        fields = ('id', 'name', 'slug')
+        fields = '__all__'
 
 
 class IngredientSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ingredient
-        fields = ('id', 'name', 'measurement_unit')
+        fields = '__all__'
 
 
 class RecipeIngredientSerializer(serializers.ModelSerializer):
@@ -106,10 +136,11 @@ class RecipeIngredientSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'amount', 'measurement_unit')
 
 
-class RecipeSerializer(serializers.ModelSerializer):
-    tags = serializers.PrimaryKeyRelatedField(
-        queryset=Tag.objects.all(), many=True, required=True
-    )
+class RecipeReadSerializer(serializers.ModelSerializer):
+    # Рецепты в избранном и в списке покупок отображаются при помощи фильтрации
+    # Отдельных get запросов не требуется (в отличие от подписок), поэтому
+    # не совсем понимаю зачем нужны отдельные сериализаторы под это
+    tags = TagSerializer(many=True)
     author = UserDetailSerializer(read_only=True)
     ingredients = RecipeIngredientSerializer(
         source='recipe_ingredients',
@@ -125,6 +156,33 @@ class RecipeSerializer(serializers.ModelSerializer):
             'id', 'tags', 'author', 'ingredients', 'is_favorited',
             'is_in_shopping_cart', 'name', 'image', 'text', 'cooking_time'
         )
+
+    @staticmethod
+    def get_is_favorited(obj):
+        return bool(getattr(obj, 'is_favorited_for_user', []))
+
+    @staticmethod
+    def get_is_in_shopping_cart(obj):
+        return bool(getattr(obj, 'is_in_shopping_cart_for_user', []))
+
+
+class RecipeWriteSerializer(serializers.ModelSerializer):
+    tags = serializers.PrimaryKeyRelatedField(
+        queryset=Tag.objects.all(), many=True, required=True
+    )
+    ingredients = RecipeIngredientSerializer(
+        source='recipe_ingredients',
+        many=True
+    )
+    image = Base64ImageField()
+
+    class Meta:
+        model = Recipe
+        fields = (
+            'id', 'ingredients', 'tags', 'author',
+            'image', 'name', 'text', 'cooking_time'
+        )
+        read_only_fields = ('author',)
 
     @staticmethod
     def pop_items(validated_data):
@@ -189,22 +247,37 @@ class RecipeSerializer(serializers.ModelSerializer):
         with transaction.atomic():
             return self.set_ingredients_tags(validated_data, instance)
 
-    @staticmethod
-    def get_is_favorited(obj):
-        return bool(getattr(obj, 'is_favorited_for_user', []))
-
-    @staticmethod
-    def get_is_in_shopping_cart(obj):
-        return bool(getattr(obj, 'is_in_shopping_cart_for_user', []))
-
-    def to_representation(self, instance):
-        representation = super().to_representation(instance)
-        tags = instance.tags.all()
-        representation['tags'] = TagSerializer(tags, many=True).data
-        return representation
-
 
 class RecipeShortSerializer(serializers.ModelSerializer):
+    # Под запись рецептов в избранное и список покупок отвечает этот
+    # сериализатор, не вижу смысл разделять его, ведь тогда будет повторяться
+    # одна и та же логика
     class Meta:
         model = Recipe
         fields = ('id', 'name', 'image', 'cooking_time')
+        read_only_fields = ('id', 'name', 'image', 'cooking_time')
+
+    @staticmethod
+    def get_context_obj(**kwargs):
+        return list(kwargs.values())
+
+    def create(self, validated_data):
+        model, recipe, user = self.get_context_obj(**self.context)[1:]
+        model.objects.get_or_create(user=user, recipe=recipe)
+        return recipe
+
+    def delete(self):
+        model, recipe, user = self.get_context_obj(**self.context)[1:]
+        model.objects.filter(user=user, recipe=recipe).delete()
+        return recipe
+
+    def validate(self, attrs):
+        request, model, recipe, user = self.get_context_obj(**self.context)
+        # В документации к api при повторном добавлении и удалении из
+        # избранного должен выбрасываться статус 400, шорткат не подойдет
+        validate_object_existence(
+            model, user, recipe, request.method,
+            exists_message='Рецепт уже добавлен',
+            not_exists_message='Рецепт уже удален'
+        )
+        return attrs

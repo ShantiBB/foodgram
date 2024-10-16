@@ -77,7 +77,7 @@ def test_user_detail(user, user_id_or_me, status_code, get_user_data):
     )
 )
 def test_user_avatar(user, data, status_code, create_user):
-    url = reverse('avatar')
+    url = reverse('customuser-avatar')
     assert not create_user.avatar
     response = user.put(url, data, format='json')
     assert response.status_code == status_code

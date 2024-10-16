@@ -35,7 +35,9 @@ class RecipeAdmin(admin.ModelAdmin):
     list_filter = ('tags',)
 
     readonly_fields = ('times_favorited',)
-    fields = ('name', 'author', 'times_favorited')
+    fields = (
+        'name', 'author', 'image', 'text', 'cooking_time', 'times_favorited'
+    )
 
     def times_favorited(self, obj):
         return RecipeFavorite.objects.filter(recipe=obj).count()
