@@ -1,6 +1,6 @@
+from django.db import models
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import AbstractUser, UserManager
-from django.db import models
 
 from .managers import UserFollowManager
 
@@ -26,6 +26,14 @@ class CustomUser(AbstractUser):
     class Meta:
         verbose_name = 'Пользователь'
         verbose_name_plural = 'Пользователи'
+
+    def clean(self):
+        from api.validation import (validate_username_field,
+                                    validate_email_field)
+
+        validate_username_field(self.username)
+        validate_email_field(self.email)
+        super().clean()
 
     def save(self, *args, **kwargs):
         if self.password and not self.password.startswith('pbkdf2_sha256$'):

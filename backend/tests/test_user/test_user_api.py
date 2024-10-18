@@ -60,6 +60,7 @@ def test_user_create(
 def test_user_detail(user, user_id_or_me, status_code, get_user_data):
     url = reverse('customuser-detail', args=[user_id_or_me])
     response = user.get(url)
+    print(response.data)
     assert response.status_code == status_code
     if status_code == status.HTTP_200_OK:
         get_user_data['id'] = User.objects.first().id

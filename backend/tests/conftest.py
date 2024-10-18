@@ -2,9 +2,9 @@ import tempfile
 import pytest
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from rest_framework.test import APIClient
 
 from recipe.models import Ingredient, Recipe, RecipeIngredient, Tag
-from rest_framework.test import APIClient
 
 User = get_user_model()
 

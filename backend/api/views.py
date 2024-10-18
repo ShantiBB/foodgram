@@ -1,23 +1,26 @@
 from django.http import HttpResponse
-from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.db.models import Exists, OuterRef, Sum
 from rest_framework import generics, mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from djoser.views import UserViewSet
 
 from .filters import IngredientFilter, RecipeFilter
 from .permissions import (IsAdminOrAuthorOrReadOnly, IsAdminOrReadOnly,
                           IsAdminOrAnonimOrReadOnly)
-from .serializers import (IngredientSerializer, RecipeReadSerializer,
-                          RecipeShortSerializer, TagSerializer,
-                          RecipeWriteSerializer, UserAvatarSerializer,
-                          UserFollowSerializer)
+from .serializers import (IngredientSerializer, RecipeDetailSerializer,
+                          RecipeFavoriteCreateSerializer, TagSerializer,
+                          RecipeCreateSerializer, UserFollowCreateSerializer,
+                          UserAvatarSerializer, UserFollowDetailSerializer,
+                          RecipeShoppingCartCreateSerializer,
+                          UserCreateSerializer, UserDetailSerializer)
 from recipe.models import (Ingredient, Recipe, RecipeFavorite,
                            RecipeIngredient, RecipeShoppingCart, Tag)
+from user.models import Follow
 
 User = get_user_model()
 
@@ -25,7 +28,14 @@ User = get_user_model()
 class CustomUserViewSet(UserViewSet):
     permission_classes = [IsAdminOrAnonimOrReadOnly]
 
-    def destroy(self, request, *args, **kwargs):
+    def get_serializer_class(self):
+        if self.action in ('list', 'retrieve', 'me'):
+            return UserDetailSerializer
+        elif self.action in ('create', 'update', 'partial_update'):
+            return UserCreateSerializer
+        return super().get_serializer_class()
+
+    def destroy(self, request, *args, **kwargs) -> Response:
         """Позволяет администратору удалять пользователя."""
         user = self.get_object()
         user.delete()
@@ -36,7 +46,7 @@ class CustomUserViewSet(UserViewSet):
         url_path='me/avatar', permission_classes=[IsAuthenticated],
         serializer_class=UserAvatarSerializer,
     )
-    def avatar(self, request):
+    def avatar(self, request) -> Response:
         user = request.user
         serializer = self.get_serializer(user, data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -44,7 +54,7 @@ class CustomUserViewSet(UserViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @avatar.mapping.delete
-    def delete_avatar(self, request):
+    def delete_avatar(self, request) -> Response:
         avatar = request.user.avatar
         if avatar:
             avatar.delete()
@@ -53,7 +63,7 @@ class CustomUserViewSet(UserViewSet):
 
 
 class FollowListView(generics.ListAPIView):
-    serializer_class = UserFollowSerializer
+    serializer_class = UserFollowDetailSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -66,26 +76,28 @@ class FollowView(
     mixins.CreateModelMixin,
     mixins.DestroyModelMixin
 ):
-    serializer_class = UserFollowSerializer
     permission_classes = [IsAuthenticated]
+    serializer_class = UserFollowCreateSerializer
     queryset = User.follows.get_recipes(Recipe)
 
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['recipes_count'] = self.get_object().recipes_count
-        context['follower'] = self.request.user
-        context['following'] = get_object_or_404(User, id=self.kwargs['pk'])
-        return context
-
-    def post(self, request, *args, **kwargs):
+    def post(self, request, *args, **kwargs) -> Response:
         return self.create(request, *args, **kwargs)
 
-    def delete(self, request, *args, **kwargs):
-        # Удаление идет через сериализатор так как удаляется не сам объект,
-        # а подписка на него, плюс идет валидация
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        serializer.delete()
+    def delete(self, request, *args, **kwargs) -> Response:
+        follower = request.user
+        following = self.get_object()
+        follow = Follow.objects.filter(
+            follower=follower, following=following
+        )
+        # Отписал вам в пачке, но так и не дождался ответа. Вынес удаление
+        # подписки в представление. Но так как согласно документации к api
+        # при повторном удалении подписки должен выбрасываться статус 400
+        # шорткат get_object_or_404 не подойдет
+        if not follow.exists():
+            raise ValidationError(
+                'Вы уже отписались от данного пользователя'
+            )
+        follow.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -97,9 +109,9 @@ class RecipeViewSet(viewsets.ModelViewSet):
 
     def get_serializer_class(self):
         if self.action in ('list', 'retrieve'):
-            return RecipeReadSerializer
+            return RecipeDetailSerializer
         elif self.action in ('create', 'update', 'partial_update'):
-            return RecipeWriteSerializer
+            return RecipeCreateSerializer
         return super().get_serializer_class()
 
     @staticmethod
@@ -125,75 +137,66 @@ class RecipeViewSet(viewsets.ModelViewSet):
         return queryset
 
     def create_or_update_serializer(
-            self, request, instance=None, partial=False
+        self, request, instance=None, partial=False
     ):
-        context = {'request': request}
         serializer = self.get_serializer(
             instance=instance, data=request.data, partial=partial
         )
         serializer.is_valid(raise_exception=True)
-        recipe = serializer.save(author=self.request.user)
-        read_serializer = RecipeReadSerializer(recipe, context=context)
-        return read_serializer
-
-    def create(self, request, *args, **kwargs):
-        read_serializer = self.create_or_update_serializer(request)
-        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
-
-    def update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        read_serializer = self.create_or_update_serializer(
-            request, instance=instance, partial=True
-        )
-        return Response(read_serializer.data, status=status.HTTP_200_OK)
-
-    def get_recipe_context(self, model, request, pk):
-        recipe = get_object_or_404(Recipe, id=pk)
-        context = {
-            'request': request,
-            'model': model,
-            'recipe': recipe,
-            'user': request.user
-        }
-        serializer = self.get_serializer(data=request.data, context=context)
-        serializer.is_valid(raise_exception=True)
+        serializer.save(author=self.request.user)
         return serializer
 
-    def handle_post(self, model, request, pk):
-        serializer = self.get_recipe_context(model, request, pk)
+    def create(self, request, *args, **kwargs) -> Response:
+        serializer = self.create_or_update_serializer(request)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs) -> Response:
+        instance = self.get_object()
+        serializer = self.create_or_update_serializer(
+            request, instance=instance, partial=True
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def handle_post(self, model, request, pk) -> Response:
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    def handle_delete(self, model, request, pk):
-        # Так же удаление идет по тому же принципу, что и выше
-        serializer = self.get_recipe_context(model, request, pk)
-        serializer.delete()
+    def handle_delete(self, model, request) -> Response:
+        user = request.user
+        recipe = self.get_object()
+        # Так же по аналогии с повторным удалением подписки
+        relation_status = model.objects.filter(user=user, recipe=recipe)
+        if not relation_status.exists():
+            raise ValidationError('Этот рецепт уже был удален')
+        relation_status.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(
         detail=True, methods=['post'], permission_classes=[IsAuthenticated],
-        serializer_class=RecipeShortSerializer
+        serializer_class=RecipeFavoriteCreateSerializer
     )
-    def favorite(self, request, pk=None):
+    def favorite(self, request, pk=None) -> Response:
         return self.handle_post(RecipeFavorite, request, pk)
 
     @favorite.mapping.delete
-    def remove_favorite(self, request, pk=None):
-        return self.handle_delete(RecipeFavorite, request, pk)
+    def remove_favorite(self, request, pk=None) -> Response:
+        return self.handle_delete(RecipeFavorite, request)
 
     @action(
         detail=True, methods=['post'], permission_classes=[IsAuthenticated],
-        serializer_class=RecipeShortSerializer
+        serializer_class=RecipeShoppingCartCreateSerializer
     )
-    def shopping_cart(self, request, pk=None):
+    def shopping_cart(self, request, pk=None) -> Response:
         return self.handle_post(RecipeShoppingCart, request, pk)
 
     @shopping_cart.mapping.delete
-    def remove_from_shopping_cart(self, request, pk=None):
-        return self.handle_delete(RecipeShoppingCart, request, pk)
+    def remove_from_shopping_cart(self, request, pk=None) -> Response:
+        return self.handle_delete(RecipeShoppingCart, request)
 
     @action(detail=True, methods=['get'], url_path='get-link')
-    def get_link(self, request, pk):
+    def get_link(self, request, pk) -> Response:
         recipe = self.get_object()
         base_url = request.build_absolute_uri('/s/')
         return Response(
@@ -204,7 +207,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
     @action(
         detail=False, methods=['get'], permission_classes=[IsAuthenticated]
     )
-    def download_shopping_cart(self, request):
+    def download_shopping_cart(self, request) -> HttpResponse:
         recipes_in_cart = RecipeShoppingCart.objects.filter(
             user=request.user
         ).values_list('recipe_id', flat=True)

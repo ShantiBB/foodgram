@@ -165,16 +165,12 @@ CORS_URLS_REGEX = r'^/api/.*$'
 DJOSER = {
     'USER_ID_FIELD': 'id',
     'HIDE_USERS': False,
-    'SERIALIZERS': {
-        'user_create': 'api.serializers.UserCreateSerializer',
-        'user': 'api.serializers.UserDetailSerializer',
-        'current_user': 'api.serializers.UserDetailSerializer',
-        'user_list': 'api.serializers.UserDetailSerializer',
-    },
     'PERMISSIONS': {
         'user_create': ['api.permissions.IsAdminOrAnonimOrReadOnly'],
-        'user': ['rest_framework.permissions.AllowAny'],
-        'user_list': ['rest_framework.permissions.AllowAny'],
+        'user_update': ['api.permissions.IsAdminOrReadOnly'],
+        'user_delete': ['api.permissions.IsAdminOrReadOnly'],
+        'user': ['api.permissions.IsAdminOrReadOnly'],
+        'user_list': ['api.permissions.IsAdminOrReadOnly'],
         'token_create': ['api.permissions.IsAdminOrAnonimOrReadOnly']
     },
 }

@@ -2,6 +2,7 @@ import csv
 import os
 
 import django
+
 from recipe.models import Ingredient
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE',

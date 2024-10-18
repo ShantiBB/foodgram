@@ -7,11 +7,13 @@ from .models import (Ingredient, Recipe, RecipeFavorite, RecipeIngredient,
 class RecipeTagInline(admin.TabularInline):
     model = RecipeTag
     extra = 1
+    autocomplete_fields = ['tag']
 
 
 class RecipeIngredientInline(admin.TabularInline):
     model = RecipeIngredient
     extra = 1
+    autocomplete_fields = ['ingredient']
 
 
 class RecipeFavoriteInline(admin.TabularInline):
