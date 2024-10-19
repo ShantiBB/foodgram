@@ -32,13 +32,24 @@ def validate_email_field(value):
 def validate_subscribe(request, following):
     if following == request.user:
         raise exceptions.ValidationError('Нельзя подписаться на себя')
-    validate_already_following(request.user, following)
+    if request.method == 'POST':
+        validate_already_following(request.user, following)
+    elif request.method == 'DELETE':
+        validate_not_following(request.user, following)
 
 
 def validate_already_following(follower, following):
     if Follow.objects.filter(follower=follower, following=following).exists():
         raise exceptions.ValidationError(
             'Вы уже подписаны на данного пользователя'
+        )
+
+
+def validate_not_following(follower, following):
+    if not Follow.objects.filter(follower=follower,
+                                 following=following).exists():
+        raise exceptions.ValidationError(
+            'Вы уже отписались от данного пользователя'
         )
 
 

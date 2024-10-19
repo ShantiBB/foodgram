@@ -25,3 +25,9 @@ class UserAdmin(admin.ModelAdmin):
         ),
     )
     search_fields = ('username', 'email')
+
+
+@admin.register(Follow)
+class FollowAdmin(admin.ModelAdmin):
+    list_display = ('follower', 'following')
+    search_fields = ('follower__username', 'following__username')

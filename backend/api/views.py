@@ -84,20 +84,10 @@ class FollowView(
         return self.create(request, *args, **kwargs)
 
     def delete(self, request, *args, **kwargs) -> Response:
-        follower = request.user
         following = self.get_object()
-        follow = Follow.objects.filter(
-            follower=follower, following=following
-        )
-        # Отписал вам в пачке, но так и не дождался ответа. Вынес удаление
-        # подписки в представление. Но так как согласно документации к api
-        # при повторном удалении подписки должен выбрасываться статус 400
-        # шорткат get_object_or_404 не подойдет
-        if not follow.exists():
-            raise ValidationError(
-                'Вы уже отписались от данного пользователя'
-            )
-        follow.delete()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.delete(following)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -164,13 +154,10 @@ class RecipeViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def handle_delete(self, model, request) -> Response:
-        user = request.user
-        recipe = self.get_object()
-        # Так же по аналогии с повторным удалением подписки
-        relation_status = model.objects.filter(user=user, recipe=recipe)
-        if not relation_status.exists():
-            raise ValidationError('Этот рецепт уже был удален')
-        relation_status.delete()
+        instance = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.delete(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(

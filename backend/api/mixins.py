@@ -1,7 +1,7 @@
-from django.shortcuts import get_object_or_404
 from rest_framework import serializers
 
 from api.validation import validate_object_existence
+from recipe.models import Recipe
 
 
 class ToRepresentationMixin(serializers.ModelSerializer):
@@ -12,30 +12,33 @@ class ToRepresentationMixin(serializers.ModelSerializer):
         return read_serializer.data
 
 
+class SerializerMetaMixin:
+
+    class Meta:
+        model = Recipe
+        fields = ('id', 'name', 'image', 'cooking_time')
+
+
 class SerializerFavoriteShoppingCartMixin(serializers.ModelSerializer):
     model = None
+
+    class Meta:
+        model = Recipe
+        fields = ('id',)
 
     def get_context_data(self):
         request = self.context.get('request')
         recipe = self.context.get('view').get_object()
         return request, recipe
 
-    def validate(self, attrs):
-        request, recipe = self.get_context_data()
-        validate_object_existence(
-            self.model, request.user, recipe, request.method,
-            exists_message='Рецепт уже добавлен',
-            not_exists_message='Рецепт уже удален'
-        )
-        return attrs
 
     def create(self, validated_data):
         request, recipe = self.get_context_data()
         self.model.objects.get_or_create(user=request.user, recipe=recipe)
         return recipe
 
-    def delete(self):
-        request, recipe = self.get_context_data()
-        obj = get_object_or_404(self.model, user=request.user, recipe=recipe)
+    def delete(self, instance):
+        request = self.context.get('request')
+        obj = self.model.objects.get(user=request.user, recipe=instance)
         obj.delete()
-        return recipe
+        return instance

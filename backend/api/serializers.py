@@ -5,8 +5,10 @@ from drf_extra_fields.fields import Base64ImageField
 
 from .validation import (validate_recipes_limit, validate_ingredient_data,
                          validate_tags_and_ingredients, validate_subscribe,
-                         validate_username_field, validate_email_field)
-from .mixins import SerializerFavoriteShoppingCartMixin, ToRepresentationMixin
+                         validate_username_field, validate_email_field,
+                         validate_object_existence)
+from .mixins import (ToRepresentationMixin, SerializerMetaMixin,
+                     SerializerFavoriteShoppingCartMixin)
 from user.models import Follow
 from recipe.models import (Ingredient, Recipe, RecipeIngredient, Tag,
                            RecipeFavorite, RecipeShoppingCart)
@@ -113,9 +115,14 @@ class UserFollowCreateSerializer(ToRepresentationMixin):
 
     def create(self, validated_data: dict) -> User:
         follower, following = self.get_follower_and_following_user()
-        follow, created = Follow.objects.get_or_create(
-            follower=follower, following=following
-        )
+        follow = Follow.objects.create(follower=follower, following=following)
+        return following
+
+    def delete(self, following) -> User:
+        request = self.context.get('request')
+        follower = request.user
+        follow = Follow.objects.filter(follower=follower, following=following)
+        follow.delete()
         return following
 
 
@@ -187,14 +194,15 @@ class RecipeDetailSerializer(serializers.ModelSerializer):
         return bool(getattr(obj, 'is_in_shopping_cart_for_user', []))
 
 
-class RecipeShortDetailSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = Recipe
-        fields = ('id', 'name', 'image', 'cooking_time')
+class RecipeShortDetailSerializer(
+    SerializerMetaMixin,
+    serializers.ModelSerializer
+):
+    pass
 
 
 class RecipeCreateSerializer(ToRepresentationMixin):
+    # Вынес to_representations в отдельный миксин
     tags = serializers.PrimaryKeyRelatedField(
         queryset=Tag.objects.all(), many=True, required=True
     )
@@ -267,20 +275,18 @@ class RecipeCreateSerializer(ToRepresentationMixin):
     def update(self, instance: Recipe, validated_data: dict) -> Recipe:
         with transaction.atomic():
             ingredients_data, tags_data = self.pop_items(validated_data)
-            for attr, value in validated_data.items():
-                setattr(instance, attr, value)
+            super().update(instance, validated_data)
             instance.recipe_ingredients.all().delete()
             return self.set_ingredients_tags(
                 ingredients_data, tags_data, instance=instance
             )
 
 
-class RecipeFavoriteDetailSerializer(serializers.ModelSerializer):
+class RecipeFavoriteDetailSerializer(
+    SerializerMetaMixin,
+    serializers.ModelSerializer
+):
     model = RecipeFavorite
-
-    class Meta:
-        model = Recipe
-        fields = ('id', 'name', 'image', 'cooking_time')
 
 
 class RecipeFavoriteCreateSerializer(
@@ -290,17 +296,21 @@ class RecipeFavoriteCreateSerializer(
     model = RecipeFavorite
     read_serializer = RecipeFavoriteDetailSerializer
 
-    class Meta:
-        model = Recipe
-        fields = ('id',)
+    def validate(self, attrs):
+        request, recipe = self.get_context_data()
+        validate_object_existence(
+            self.model, request.user, recipe, request.method,
+            exists_message='Рецепт уже добавлен в избранное',
+            not_exists_message='Рецепт уже удален из избранного'
+        )
+        return attrs
 
 
-class RecipeShoppingCartDetailSerializer(SerializerFavoriteShoppingCartMixin):
+class RecipeShoppingCartDetailSerializer(
+    SerializerMetaMixin,
+    serializers.ModelSerializer
+):
     model = RecipeShoppingCart
-
-    class Meta:
-        model = Recipe
-        fields = ('id', 'name', 'image', 'cooking_time')
 
 
 class RecipeShoppingCartCreateSerializer(
@@ -310,6 +320,11 @@ class RecipeShoppingCartCreateSerializer(
     model = RecipeShoppingCart
     read_serializer = RecipeShoppingCartDetailSerializer
 
-    class Meta:
-        model = Recipe
-        fields = ('id',)
+    def validate(self, attrs):
+        request, recipe = self.get_context_data()
+        validate_object_existence(
+            self.model, request.user, recipe, request.method,
+            exists_message='Рецепт уже добавлен в список покупок',
+            not_exists_message='Рецепт уже удален из списка покупок'
+        )
+        return attrs
