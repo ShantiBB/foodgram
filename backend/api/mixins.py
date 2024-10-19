@@ -1,6 +1,5 @@
 from rest_framework import serializers
 
-from api.validation import validate_object_existence
 from recipe.models import Recipe
 
 
@@ -30,7 +29,6 @@ class SerializerFavoriteShoppingCartMixin(serializers.ModelSerializer):
         request = self.context.get('request')
         recipe = self.context.get('view').get_object()
         return request, recipe
-
 
     def create(self, validated_data):
         request, recipe = self.get_context_data()

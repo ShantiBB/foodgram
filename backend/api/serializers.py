@@ -115,7 +115,7 @@ class UserFollowCreateSerializer(ToRepresentationMixin):
 
     def create(self, validated_data: dict) -> User:
         follower, following = self.get_follower_and_following_user()
-        follow = Follow.objects.create(follower=follower, following=following)
+        Follow.objects.create(follower=follower, following=following)
         return following
 
     def delete(self, following) -> User:
